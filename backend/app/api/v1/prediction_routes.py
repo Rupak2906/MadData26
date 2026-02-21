@@ -1,0 +1,1 @@
+# Endpoints for uploading images and triggering body analysis/prediction.

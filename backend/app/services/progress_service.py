@@ -1,0 +1,1 @@
+# Processes user updates and recalculates progress metrics.

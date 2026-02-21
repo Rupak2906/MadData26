@@ -1,0 +1,1 @@
+# Handles signup, login, JWT token creation, and user authentication endpoints.

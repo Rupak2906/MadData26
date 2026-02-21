@@ -1,0 +1,1 @@
+# Loads environment variables (.env) and centralizes app settings.
