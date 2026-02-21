@@ -1,0 +1,60 @@
+# List of Python dependencies for backend environment recreation.
+# =========================
+# API SERVER
+# =========================
+fastapi
+uvicorn[standard]
+python-multipart
+
+# =========================
+# DATABASE
+# =========================
+sqlalchemy
+psycopg2-binary
+alembic
+
+# =========================
+# AUTHENTICATION
+# =========================
+python-jose[cryptography]
+passlib[bcrypt]
+
+# =========================
+# DATA VALIDATION
+# =========================
+pydantic
+pydantic-settings
+
+# =========================
+# COMPUTER VISION / ML
+# =========================
+opencv-python
+mediapipe
+numpy
+pillow
+
+# =========================
+# AI / AGENT FRAMEWORK
+# (choose LangGraph ecosystem)
+# =========================
+langchain
+langgraph
+openai
+tiktoken
+
+# =========================
+# BACKGROUND TASKS
+# =========================
+celery
+redis
+
+# =========================
+# HTTP / UTILITIES
+# =========================
+httpx
+python-dotenv
+
+# =========================
+# LOGGING & DEV
+# =========================
+loguru

@@ -1,0 +1,1 @@
+# Starts FastAPI app, registers routes, middleware, and initializes services.
