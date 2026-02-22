@@ -130,6 +130,7 @@ export default function Intake() {
         const detailMessage = Array.isArray(data.details)
           ? data.details.join(" | ")
           : (data.detail || data.message || rawText || "").trim();
+        const predictIsInternal = predictRes.status >= 500;
 
         // Fallback: still generate a profile-based plan if CV prediction fails.
         const regenRes = await fetch(`${API_BASE_URL}/plan/regenerate`, {
@@ -139,18 +140,30 @@ export default function Intake() {
           },
         });
         if (regenRes.ok) {
-          alert(
-            detailMessage
-              ? `Photo scan failed (${predictRes.status}): ${detailMessage}. Generated a profile-based plan instead.`
-              : "Photo scan failed, but a profile-based plan was generated instead."
-          );
+          if (!predictIsInternal) {
+            alert(
+              detailMessage
+                ? `Photo scan failed (${predictRes.status}): ${detailMessage}. Generated a profile-based plan instead.`
+                : "Photo scan failed, but a profile-based plan was generated instead."
+            );
+          }
         } else {
           const regenData = await regenRes.json().catch(() => ({}));
-          throw new Error(
-            detailMessage ||
-            regenData.detail ||
-            `Prediction failed (${predictRes.status}).`
-          );
+          const regenIsInternal = regenRes.status >= 500;
+          if (predictIsInternal || regenIsInternal) {
+            // API-key/agent/server failures should not block user flow.
+            // Continue to report generation using available fallback data.
+            console.warn("Bypassing internal server error during prediction/regen", {
+              predictStatus: predictRes.status,
+              regenStatus: regenRes.status,
+            });
+          } else {
+            throw new Error(
+              detailMessage ||
+              regenData.detail ||
+              `Prediction failed (${predictRes.status}).`
+            );
+          }
         }
       }
 
