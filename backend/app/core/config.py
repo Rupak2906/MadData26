@@ -8,6 +8,6 @@ class Settings(BaseSettings):
     JWT_EXPIRATION_SECONDS: int = 3600
 
     class Config:
-        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+        env_file =".env"
 
 settings = Settings()
