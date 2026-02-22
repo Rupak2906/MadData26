@@ -1,48 +1,57 @@
 """
 inference.py
 ------------
-Loads the trained models and exposes three clean functions:
+Loads the trained models and exposes:
 
   extract_features(raw, user) -> FeatureVector
   predict(fv)                 -> PredictionResult
-  explain(fv)                 -> ExplainResult
+  explain(fv, frame_label, peak_lean_mass) -> ExplainResult
 
-These are the functions wired into the FastAPI endpoints.
+Run train_all.py first to generate the .pkl model files.
 """
 
 import os
 import joblib
 import numpy as np
 
-from features import (
+# Use absolute imports so this works when called from the FastAPI app
+from app.ML.features import (
     RawMeasurements, UserInputs, FeatureVector, build_feature_vector
 )
 
-MODEL_DIR = "models"
+MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 
 _models = {}
 
+
 def _load():
+    """Lazy-load all models from disk (cached after first call)."""
     if _models:
         return
-    _models["frame_clf"]    = joblib.load(os.path.join(MODEL_DIR, "frame_classifier.pkl"))
-    _models["frame_scaler"] = joblib.load(os.path.join(MODEL_DIR, "frame_scaler.pkl"))
-    _models["peak_model"]   = joblib.load(os.path.join(MODEL_DIR, "peak_mass_model.pkl"))
-    _models["peak_scaler"]  = joblib.load(os.path.join(MODEL_DIR, "peak_scaler.pkl"))
-    _models["tl_model"]     = joblib.load(os.path.join(MODEL_DIR, "timeline_model.pkl"))
-    _models["tl_scaler"]    = joblib.load(os.path.join(MODEL_DIR, "timeline_scaler.pkl"))
-    _models["tl_features"]  = joblib.load(os.path.join(MODEL_DIR, "timeline_features.pkl"))
+    try:
+        _models["frame_clf"]    = joblib.load(os.path.join(MODEL_DIR, "frame_classifier.pkl"))
+        _models["frame_scaler"] = joblib.load(os.path.join(MODEL_DIR, "frame_scaler.pkl"))
+        _models["peak_model"]   = joblib.load(os.path.join(MODEL_DIR, "peak_mass_model.pkl"))
+        _models["peak_scaler"]  = joblib.load(os.path.join(MODEL_DIR, "peak_scaler.pkl"))
+        _models["tl_model"]     = joblib.load(os.path.join(MODEL_DIR, "timeline_model.pkl"))
+        _models["tl_scaler"]    = joblib.load(os.path.join(MODEL_DIR, "timeline_scaler.pkl"))
+        _models["tl_features"]  = joblib.load(os.path.join(MODEL_DIR, "timeline_features.pkl"))
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"ML models not found: {e}. Run `python -m app.ML.train_all` from the backend/ directory first."
+        )
 
 
-# ─────────────────────────────────────────────
-# Output schema
-# ─────────────────────────────────────────────
+# ── Output schema ──────────────────────────────────────────────────────────────
 
 class PredictionResult:
-    def __init__(self, frame_type, frame_label, frame_confidence,
-                 current_lean_mass_kg, current_ffmi, predicted_body_fat_pct,
-                 peak_lean_mass_kg, peak_ffmi, lean_mass_gap_kg,
-                 months_realistic, months_optimistic, months_conservative):
+    def __init__(
+        self,
+        frame_type, frame_label, frame_confidence,
+        current_lean_mass_kg, current_ffmi, predicted_body_fat_pct,
+        peak_lean_mass_kg, peak_ffmi, lean_mass_gap_kg,
+        months_realistic, months_optimistic, months_conservative,
+    ):
         self.frame_type             = frame_type
         self.frame_label            = frame_label
         self.frame_confidence       = frame_confidence
@@ -79,27 +88,10 @@ class ExplainResult:
         self.timeline_shap = timeline_shap
 
 
-# ─────────────────────────────────────────────
-# Feature helpers
-# ─────────────────────────────────────────────
-
-FRAME_FEATURES = [
-    "shoulder_width_n", "hip_width_n", "waist_width_n",
-    "torso_length_n", "leg_length_n", "upper_arm_n",
-    "forearm_n", "thigh_n", "calf_n", "symmetry_score",
-    "shoulder_hip_ratio", "shoulder_waist_ratio",
-    "torso_leg_ratio", "arm_torso_ratio",
-    "upper_lower_arm_ratio", "thigh_calf_ratio",
-    "sex", "age", "height_cm", "weight_kg",
-    "intensity", "weekly_training_days",
-    "bmi", "predicted_body_fat", "lean_mass_kg", "ffmi",
-]
-
-PEAK_FEATURES = FRAME_FEATURES + ["frame_label"]
+# ── Feature array builders ─────────────────────────────────────────────────────
 
 FRAME_NAME_MAP = {0: "narrow", 1: "balanced", 2: "wide"}
 
-# Structural-only features used by the frame classifier
 _FRAME_STRUCT_FEATURES = [
     "shoulder_width_n", "hip_width_n", "waist_width_n",
     "torso_length_n", "leg_length_n", "upper_arm_n",
@@ -109,18 +101,27 @@ _FRAME_STRUCT_FEATURES = [
     "upper_lower_arm_ratio", "thigh_calf_ratio",
 ]
 
+_PEAK_FEATURES = _FRAME_STRUCT_FEATURES + [
+    "sex", "age", "height_cm", "weight_kg",
+    "intensity", "weekly_training_days",
+    "bmi", "predicted_body_fat", "lean_mass_kg", "ffmi",
+    "frame_label",
+]
+
+
 def _fv_to_frame_array(fv: FeatureVector) -> np.ndarray:
-    vals = [getattr(fv, f) for f in _FRAME_STRUCT_FEATURES]
-    return np.array(vals).reshape(1, -1)
+    return np.array([getattr(fv, f) for f in _FRAME_STRUCT_FEATURES]).reshape(1, -1)
 
 
 def _fv_to_peak_array(fv: FeatureVector, frame_label: int) -> np.ndarray:
-    vals = [getattr(fv, f) for f in FRAME_FEATURES] + [float(frame_label)]
+    vals = [getattr(fv, f) for f in _PEAK_FEATURES[:-1]] + [float(frame_label)]
     return np.array(vals).reshape(1, -1)
 
 
-def _fv_to_timeline_dict(fv: FeatureVector, frame_label: int,
-                          peak_lean_mass: float, lean_mass_gap: float) -> dict:
+def _fv_to_timeline_dict(
+    fv: FeatureVector, frame_label: int,
+    peak_lean_mass: float, lean_mass_gap: float
+) -> dict:
     return {
         "shoulder_width_n":     fv.shoulder_width_n,
         "hip_width_n":          fv.hip_width_n,
@@ -145,20 +146,20 @@ def _fv_to_timeline_dict(fv: FeatureVector, frame_label: int,
     }
 
 
-# Public API
+# ── Public API ─────────────────────────────────────────────────────────────────
 
 def extract_features(raw: RawMeasurements, user: UserInputs) -> FeatureVector:
-    """Step 1: build feature vector from raw measurements + user inputs."""
+    """Build a FeatureVector from CV measurements + user form inputs."""
     return build_feature_vector(raw, user)
 
 
 def predict(fv: FeatureVector) -> PredictionResult:
-    """Step 2: run all three models and return structured results."""
+    """Run all three ML models and return a structured prediction."""
     _load()
 
     height_m = fv.height_cm / 100.0
 
-    # ── Frame classification ──────────────────
+    # Frame classification
     frame_arr        = _fv_to_frame_array(fv)
     frame_arr_scaled = _models["frame_scaler"].transform(frame_arr)
     frame_label      = int(_models["frame_clf"].predict(frame_arr_scaled)[0])
@@ -166,18 +167,18 @@ def predict(fv: FeatureVector) -> PredictionResult:
     frame_conf       = float(frame_proba[frame_label])
     frame_type       = FRAME_NAME_MAP[frame_label]
 
-    # ── Peak lean mass ────────────────────────
+    # Peak lean mass
     peak_arr       = _fv_to_peak_array(fv, frame_label)
     peak_scaled    = _models["peak_scaler"].transform(peak_arr)
     peak_lean_mass = float(_models["peak_model"].predict(peak_scaled)[0])
     peak_ffmi      = peak_lean_mass / (height_m ** 2)
     lean_mass_gap  = max(peak_lean_mass - fv.lean_mass_kg, 0.0)
 
-    # ── Timeline ──────────────────────────────
-    tl_features = _models["tl_features"]
-    fv_dict     = _fv_to_timeline_dict(fv, frame_label, peak_lean_mass, lean_mass_gap)
-    tl_row      = np.array([fv_dict[f] for f in tl_features]).reshape(1, -1)
-    tl_scaled   = _models["tl_scaler"].transform(tl_row)
+    # Timeline
+    tl_features      = _models["tl_features"]
+    fv_dict          = _fv_to_timeline_dict(fv, frame_label, peak_lean_mass, lean_mass_gap)
+    tl_row           = np.array([fv_dict[f] for f in tl_features]).reshape(1, -1)
+    tl_scaled        = _models["tl_scaler"].transform(tl_row)
     months_realistic = float(np.clip(_models["tl_model"].predict(tl_scaled)[0], 3, 120))
 
     return PredictionResult(
@@ -198,9 +199,7 @@ def predict(fv: FeatureVector) -> PredictionResult:
 
 def explain(fv: FeatureVector, frame_label: int, peak_lean_mass: float) -> ExplainResult:
     """
-    Step 3: generate SHAP values for both regressors.
-    Returns top-feature attribution dicts sorted by absolute impact.
-
+    Generate SHAP feature attributions for the peak mass and timeline models.
     Requires: pip install shap
     """
     try:
@@ -212,26 +211,22 @@ def explain(fv: FeatureVector, frame_label: int, peak_lean_mass: float) -> Expla
 
     lean_mass_gap = max(peak_lean_mass - fv.lean_mass_kg, 0.0)
 
-    # ── Peak SHAP ────────────────────────────
-    peak_arr       = _fv_to_peak_array(fv, frame_label)
-    peak_scaled    = _models["peak_scaler"].transform(peak_arr)
-    peak_explainer = shap.TreeExplainer(_models["peak_model"])
-    peak_shap_vals = peak_explainer.shap_values(peak_scaled)[0]
-    peak_shap_dict = dict(sorted(
-        zip(PEAK_FEATURES, [round(float(v), 4) for v in peak_shap_vals]),
+    peak_arr    = _fv_to_peak_array(fv, frame_label)
+    peak_scaled = _models["peak_scaler"].transform(peak_arr)
+    peak_exp    = shap.TreeExplainer(_models["peak_model"])
+    peak_shap   = dict(sorted(
+        zip(_PEAK_FEATURES, [round(float(v), 4) for v in peak_exp.shap_values(peak_scaled)[0]]),
         key=lambda x: abs(x[1]), reverse=True
     ))
 
-    # ── Timeline SHAP ────────────────────────
     tl_features = _models["tl_features"]
     fv_dict     = _fv_to_timeline_dict(fv, frame_label, peak_lean_mass, lean_mass_gap)
     tl_row      = np.array([fv_dict[f] for f in tl_features]).reshape(1, -1)
     tl_scaled   = _models["tl_scaler"].transform(tl_row)
-    tl_explainer  = shap.TreeExplainer(_models["tl_model"])
-    tl_shap_vals  = tl_explainer.shap_values(tl_scaled)[0]
-    tl_shap_dict  = dict(sorted(
-        zip(tl_features, [round(float(v), 4) for v in tl_shap_vals]),
+    tl_exp      = shap.TreeExplainer(_models["tl_model"])
+    tl_shap     = dict(sorted(
+        zip(tl_features, [round(float(v), 4) for v in tl_exp.shap_values(tl_scaled)[0]]),
         key=lambda x: abs(x[1]), reverse=True
     ))
 
-    return ExplainResult(peak_shap=peak_shap_dict, timeline_shap=tl_shap_dict)
+    return ExplainResult(peak_shap=peak_shap, timeline_shap=tl_shap)

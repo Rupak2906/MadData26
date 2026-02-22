@@ -2,10 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
-import time
 
 from app.core.database import get_db
-from app.core.security import hash_password, create_jwt_token, verify_jwt_token
+from app.core.security import hash_password, verify_password, create_jwt_token, verify_jwt_token
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -15,6 +14,16 @@ class RegisterRequest(BaseModel):
     name: str
     email: str
     password: str
+    # Required profile fields collected at registration/onboarding
+    age: int
+    biological_sex: str
+    height_cm: float
+    weight_kg: float
+    experience_level: str
+    days_available: int
+    skip_frequency: str
+    diet_strictness: str
+    primary_goal: str
 
 
 class LoginRequest(BaseModel):
@@ -22,9 +31,24 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _user_to_dict(user: User) -> dict:
+    return {
+        "user_id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "age": user.age,
+        "biological_sex": user.biological_sex,
+        "height_cm": user.height_cm,
+        "weight_kg": user.weight_kg,
+        "experience_level": user.experience_level,
+        "primary_goal": user.primary_goal,
+        "consistency_score": user.consistency_score,
+    }
+
+
 @router.post("/register")
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    """Register a new user account."""
+    """Register a new user account and return a JWT."""
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -33,44 +57,38 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
         name=data.name,
         email=data.email,
         password=hash_password(data.password),
+        age=data.age,
+        biological_sex=data.biological_sex,
+        height_cm=data.height_cm,
+        weight_kg=data.weight_kg,
+        experience_level=data.experience_level,
+        days_available=data.days_available,
+        skip_frequency=data.skip_frequency,
+        diet_strictness=data.diet_strictness,
+        primary_goal=data.primary_goal,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    token = create_jwt_token(str(user.id), expiration_time=int(time.time()) + 3600)
-
-    return {
-        "user_id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "token": token,
-    }
+    token = create_jwt_token(str(user.id))
+    return {**_user_to_dict(user), "token": token}
 
 
 @router.post("/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """User login endpoint."""
+    """Login with email/password and return a JWT."""
     user = db.query(User).filter(User.email == data.email).first()
-    if not user:
+    if not user or not verify_password(data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if user.password != hash_password(data.password):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    token = create_jwt_token(str(user.id), expiration_time=int(time.time()) + 3600)
-
-    return {
-        "user_id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "token": token,
-    }
+    token = create_jwt_token(str(user.id))
+    return {**_user_to_dict(user), "token": token}
 
 
 @router.get("/me")
 def get_me(token: str, db: Session = Depends(get_db)):
-    """Get current authenticated user info."""
+    """Get current authenticated user."""
     user_id = verify_jwt_token(token)
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -79,8 +97,4 @@ def get_me(token: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return {
-        "user_id": user.id,
-        "name": user.name,
-        "email": user.email,
-    }
+    return _user_to_dict(user)
