@@ -22,6 +22,7 @@ from typing import Any
 
 from app.core.database import get_db
 from app.core.security import verify_jwt_token
+from app.core.config import settings
 from app.models.user import User
 from app.services.cv_service import CVService, ValidationError, RawMeasurements
 from app.services.prediction_service import save_body_analysis, get_body_analysis
@@ -290,20 +291,81 @@ async def upload_and_predict(
         "milestone_3_month", "milestone_3_description",
     ]
 
-    try:
-        workout_data = run_workout_agent(user_dict, analysis_dict)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"Workout agent error: {e}")
+    gemini_key = (settings.GEMINI_API_KEY or "").strip()
+    use_agents = bool(gemini_key) and not gemini_key.lower().startswith("dummy")
 
-    try:
-        diet_data = run_diet_agent(user_dict, analysis_dict)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"Diet agent error: {e}")
+    if use_agents:
+        try:
+            workout_data = run_workout_agent(user_dict, analysis_dict)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=f"Workout agent error: {e}")
 
-    try:
-        timeline_data = run_timeline_agent(user_dict, workout_data, diet_data)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"Timeline agent error: {e}")
+        try:
+            diet_data = run_diet_agent(user_dict, analysis_dict)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=f"Diet agent error: {e}")
+
+        try:
+            timeline_data = run_timeline_agent(user_dict, workout_data, diet_data)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=f"Timeline agent error: {e}")
+    else:
+        # Keep endpoint functional for local/dev if LLM key is unavailable.
+        target_bf = 12.0 if user.primary_goal in {"build_muscle", "both"} else 14.0
+        gain_needed = max(0.0, round(float(ml["lean_mass_gap_kg"]), 2))
+        workout_data = {
+            "peak_lean_mass_kg": float(ml["peak_lean_mass_kg"]),
+            "target_bf_pct": target_bf,
+            "peak_ffmi": float(ml["peak_ffmi"]),
+            "muscle_gain_required_kg": gain_needed,
+            "fat_loss_required_pct": max(0.0, round(float(ml["predicted_body_fat_pct"]) - target_bf, 2)),
+            "muscle_gaps": {"chest": 2.2, "back": 2.0, "legs": 2.8, "arms": 1.4, "shoulders": 1.6},
+            "primary_strategy": "recomp" if user.primary_goal == "both" else ("bulk" if user.primary_goal == "build_muscle" else "cut"),
+            "agent_reasoning": "Fallback plan generated without LLM agent output.",
+        }
+        tdee = int(round(user.weight_kg * 33))
+        adjustment = 250 if workout_data["primary_strategy"] == "bulk" else (-350 if workout_data["primary_strategy"] == "cut" else 0)
+        daily = max(1400, tdee + adjustment)
+        protein = int(round(user.weight_kg * 2.2))
+        fats = int(round(user.weight_kg * 0.8))
+        carbs = max(80, int(round((daily - (protein * 4 + fats * 9)) / 4)))
+        diet_data = {
+            "tdee": float(tdee),
+            "daily_calories": int(daily),
+            "caloric_strategy": workout_data["primary_strategy"],
+            "caloric_adjustment": int(adjustment),
+            "protein_g": protein,
+            "carbs_g": carbs,
+            "fats_g": fats,
+            "meals_per_day": 3,
+            "meal_complexity": "simple",
+            "water_intake_liters": 3.0,
+            "cheat_meals_per_week": 1,
+            "dietary_preference": user.dietary_preference or "none",
+            "foods_to_avoid": user.foods_to_avoid or "",
+            "diet_reasoning": "Fallback nutrition targets generated from body weight and strategy.",
+        }
+        realistic = max(6, int(round(gain_needed / 0.5)) if gain_needed > 0 else 6)
+        timeline_data = {
+            "total_months_optimistic": max(4, int(round(realistic * 0.8))),
+            "total_months_realistic": realistic,
+            "total_months_conservative": int(round(realistic * 1.2)),
+            "confidence_level": "medium",
+            "consistency_score": user.consistency_score if user.consistency_score is not None else 0.65,
+            "consistency_impact": "Higher adherence can materially shorten the timeline.",
+            "phase_1_goal": "Foundation and adherence",
+            "phase_1_months": max(1, realistic // 3),
+            "phase_2_goal": "Primary transformation phase",
+            "phase_2_months": max(2, realistic // 2),
+            "phase_3_goal": "Refinement and maintenance",
+            "phase_3_months": max(1, realistic - (max(1, realistic // 3) + max(2, realistic // 2))),
+            "milestone_1_month": max(1, realistic // 4),
+            "milestone_1_description": "Noticeable body composition improvement",
+            "milestone_2_month": max(2, realistic // 2),
+            "milestone_2_description": "Clear visual and strength improvements",
+            "milestone_3_month": max(3, int(round(realistic * 0.85))),
+            "milestone_3_description": "Near-target physique with consistent habits",
+        }
 
     # 10. Save plans
     transformation_plan = save_transformation_plan(

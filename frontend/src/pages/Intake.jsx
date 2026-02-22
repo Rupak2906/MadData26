@@ -4,10 +4,12 @@ import { useNavigate } from "react-router-dom";
 const steps = ["Basic Info", "Body Metrics", "Training", "Lifestyle", "Goals", "Photos"];
 
 export default function Intake() {
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [photo, setPhoto] = useState(null);
   const [backPhoto, setBackPhoto] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     biological_sex: "", age: "", height_cm: "", weight_kg: "",
     experience_level: "", days_available: "", skip_frequency: "",
@@ -28,9 +30,76 @@ export default function Intake() {
     </button>
   );
 
-  const handleSubmit = () => {
-    localStorage.setItem("intake_data", JSON.stringify(formData));
-    navigate("/analyzing");
+  const handleSubmit = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      alert("Session expired. Please sign in again.");
+      navigate("/");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const profilePayload = {
+        biological_sex: formData.biological_sex || undefined,
+        age: formData.age ? Number(formData.age) : undefined,
+        height_cm: formData.height_cm ? Number(formData.height_cm) : undefined,
+        weight_kg: formData.weight_kg ? Number(formData.weight_kg) : undefined,
+        experience_level: formData.experience_level || undefined,
+        days_available: formData.days_available ? Number(formData.days_available) : undefined,
+        skip_frequency: formData.skip_frequency || undefined,
+        sleep_hours: formData.sleep_hours || undefined,
+        stress_level: formData.stress_level || undefined,
+        diet_strictness: formData.diet_strictness || undefined,
+        dietary_preference: formData.dietary_preference || undefined,
+        primary_goal: formData.primary_goal || undefined,
+        ideal_physique: formData.ideal_physique || undefined,
+      };
+
+      const profileRes = await fetch(`${API_BASE_URL}/user/profile?token=${encodeURIComponent(token)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profilePayload),
+      });
+      if (!profileRes.ok) {
+        const data = await profileRes.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to save intake profile");
+      }
+
+      if (photo && backPhoto) {
+        const fd = new FormData();
+        fd.append("front_image", photo);
+        fd.append("back_image", backPhoto);
+        fd.append("front_pose_type", "front");
+        fd.append("back_pose_type", "back");
+        fd.append("token", token);
+        const predictRes = await fetch(`${API_BASE_URL}/predict`, {
+          method: "POST",
+          body: fd,
+        });
+        if (!predictRes.ok) {
+          const data = await predictRes.json().catch(() => ({}));
+          throw new Error(
+            data.detail || data.message || "Prediction failed. Please verify your photos and try again."
+          );
+        }
+      } else {
+        const regenRes = await fetch(`${API_BASE_URL}/plan/regenerate?token=${encodeURIComponent(token)}`, {
+          method: "POST",
+        });
+        if (!regenRes.ok) {
+          const data = await regenRes.json().catch(() => ({}));
+          throw new Error(data.detail || "Failed to generate plan");
+        }
+      }
+
+      localStorage.setItem("intake_data", JSON.stringify(formData));
+      navigate("/analyzing");
+    } catch (err) {
+      alert(err.message || "Failed to submit intake data");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const renderStep = () => {
@@ -245,9 +314,12 @@ export default function Intake() {
                 ← Back
               </button>
             ) : <div className="w-28" />}
-            <button onClick={() => step < steps.length - 1 ? setStep(s => s + 1) : handleSubmit()}
-              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium uppercase tracking-wide transition-colors">
-              {step < steps.length - 1 ? "Continue →" : "Run Analysis"}
+            <button
+              onClick={() => step < steps.length - 1 ? setStep(s => s + 1) : handleSubmit()}
+              disabled={submitting}
+              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg text-xs font-medium uppercase tracking-wide transition-colors"
+            >
+              {step < steps.length - 1 ? "Continue →" : submitting ? "Submitting..." : "Run Analysis"}
             </button>
           </div>
         </div>

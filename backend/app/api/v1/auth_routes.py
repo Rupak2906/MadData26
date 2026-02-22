@@ -14,16 +14,16 @@ class RegisterRequest(BaseModel):
     name: str
     email: str
     password: str
-    # Required profile fields collected at registration/onboarding
-    age: int
-    biological_sex: str
-    height_cm: float
-    weight_kg: float
-    experience_level: str
-    days_available: int
-    skip_frequency: str
-    diet_strictness: str
-    primary_goal: str
+    # Optional at signup; frontend can enrich profile in onboarding.
+    age: int = 25
+    biological_sex: str = "male"
+    height_cm: float = 170.0
+    weight_kg: float = 70.0
+    experience_level: str = "beginner"
+    days_available: int = 3
+    skip_frequency: str = "sometimes"
+    diet_strictness: str = "moderate"
+    primary_goal: str = "both"
 
 
 class LoginRequest(BaseModel):
@@ -79,8 +79,10 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     """Login with email/password and return a JWT."""
     user = db.query(User).filter(User.email == data.email).first()
-    if not user or not verify_password(data.password, user.password):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found for this email")
+    if not verify_password(data.password, user.password):
+        raise HTTPException(status_code=401, detail="Incorrect password")
 
     token = create_jwt_token(str(user.id))
     return {**_user_to_dict(user), "token": token}

@@ -65,6 +65,12 @@ class CVService:
 
     def detect_pose(self, image: np.ndarray) -> Any:
         """Run MediaPipe pose detection and return results."""
+        if not hasattr(mp, "solutions") or not hasattr(mp.solutions, "pose"):
+            raise ValidationError(
+                "rejected",
+                "cv_dependency_error",
+                "Computer-vision dependency is unavailable in this environment.",
+            )
         with mp.solutions.pose.Pose(static_image_mode=True) as pose:
             results = pose.process(image)
         return results

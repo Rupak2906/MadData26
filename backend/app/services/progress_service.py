@@ -7,7 +7,7 @@ Processes user biweekly progress submissions and computes trend metrics.
 from sqlalchemy.orm import Session
 from sqlalchemy import Column, Integer, Float, String, DateTime
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.core.database import Base, engine
 
 
 # ── Progress model (defined here to keep it self-contained) ───────────────────
@@ -24,6 +24,11 @@ class Progress(Base):
     submitted_at = Column(DateTime, default=func.now())
 
 
+def _ensure_progress_table() -> None:
+    """Guarantee progress table exists even if migrations are behind."""
+    Progress.__table__.create(bind=engine, checkfirst=True)
+
+
 # ── Service functions ─────────────────────────────────────────────────────────
 
 def save_progress_entry(
@@ -34,6 +39,7 @@ def save_progress_entry(
     notes: str | None,
 ) -> Progress:
     """Save a new progress entry and compute lean mass if possible."""
+    _ensure_progress_table()
     lean_mass = None
     if weight_kg is not None and body_fat_pct is not None:
         lean_mass = round(weight_kg * (1 - body_fat_pct / 100), 2)
@@ -53,6 +59,7 @@ def save_progress_entry(
 
 def get_progress_history(db: Session, user_id: int) -> list[Progress]:
     """Return all progress entries for a user, oldest first."""
+    _ensure_progress_table()
     return (
         db.query(Progress)
         .filter(Progress.user_id == user_id)
