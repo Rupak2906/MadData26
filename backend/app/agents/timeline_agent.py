@@ -2,9 +2,11 @@ import os
 import json
 import re
 import google.generativeai as genai
+from app.core.config import Settings
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+genai.configure(api_key=Settings.GEMINI_API_KEY)
 MODEL = "gemini-2.0-flash"
+
 
 
 def _call_gemini(system: str, user: str) -> dict:
