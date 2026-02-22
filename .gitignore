@@ -1,5 +1,28 @@
+# Environment
+.env
+
+# Database
+*.db
+
+# Alembic (keep the versions folder but ignore compiled files)
+alembic/versions/*.pyc
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 venv/
-.env
+.venv/
+
+# ML generated files
+backend/app/ML/data/
+backend/app/ML/models/
+
+# Next.js
+.next/
+node_modules/
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
