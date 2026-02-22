@@ -60,7 +60,7 @@ The agent tells you: *"If you increase from 50% to 80% consistency, you shave 4 
 ## 🏗️ Architecture
 
 ```
-Frontend (React + Tailwind)
+Frontend (Next.js + Tailwind)
         ↓
 FastAPI Backend
         ↓
@@ -131,7 +131,7 @@ The coaching agent receives the full analysis, user's consistency score, and ava
 | Machine Learning | scikit-learn, XGBoost |
 | Agentic AI | Claude API (tool calling) |
 | Database | SQLite |
-| Frontend | React + Tailwind CSS |
+| Frontend | Next.js + Tailwind CSS |
 | Charts | Recharts |
 | Deployment | Uvicorn (local) / Render (cloud) |
 
@@ -142,17 +142,38 @@ The coaching agent receives the full analysis, user's consistency score, and ava
 ```
 ai-physique-predictor/
 │
+
+```
+ideal-body-ai/
+│
 ├── backend/
-│   ├── main.py                  # FastAPI app + endpoints
-│   ├── pose_extractor.py        # MediaPipe pose estimation
-│   ├── feature_engineering.py   # Keypoint → feature vector
-│   ├── clustering_model.pkl     # KMeans frame classifier
-│   ├── peak_mass_model.pkl      # Peak mass regression model
-│   ├── workout_engine.py        # Rule-based workout generator
-│   ├── nutrition_engine.py      # TDEE + macro calculator
-│   ├── agent.py                 # Transformation Coach Agent
-│   ├── database.py              # SQLite helpers
-│   └── schema.sql               # DB schema
+│   ├── requirements.txt         # List of Python dependencies
+│   ├── Dockerfile               # Backend container build config
+│   └── app/
+│       ├── main.py              # FastAPI app entry point
+│       ├── api/
+│       │   └── v1/
+│       │       ├── auth_routes.py       # Signup, login, JWT, user auth
+│       │       ├── prediction_routes.py # Image upload, body analysis
+│       │       ├── plan_routes.py       # Workout, diet, timeline plans
+│       │       └── progress_routes.py   # Progress updates/history
+│       ├── core/
+│       │   ├── config.py        # Loads env vars, app settings
+│       │   ├── security.py      # Password hashing, JWT helpers
+│       │   └── database.py      # DB connection/session
+│       ├── models/              # SQLAlchemy table definitions
+│       ├── schemas/             # Pydantic request/response models
+│       ├── services/
+│       │   ├── cv_service.py    # OpenCV/Mediapipe processing
+│       │   ├── ai_agent.py      # Orchestrates agent workflows
+│       │   ├── planner_service.py # Generates final plans
+│       │   └── progress_service.py # Processes user updates
+│       ├── agents/
+│       │   ├── diet_agent.py    # Diet recommendations
+│       │   ├── workout_agent.py # Workout routines
+│       │   └── timeline_agent.py # Timeline estimation
+│       └── workers/
+│           └── celery_worker.py # Celery background tasks
 │
 ├── frontend/
 │   └── src/
@@ -179,39 +200,30 @@ ai-physique-predictor/
 └── README.md
 ```
 
----
-
 ## ⚡ Getting Started
 
 ### Prerequisites
 - Python 3.10+
 - Node.js 18+
-- An Anthropic API key (for the coaching agent)
+- Anthropic API key (for coaching agent)
 
 ### Backend Setup
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/ai-physique-predictor.git
-cd ai-physique-predictor
+git clone https://github.com/rupak2906/MadData26.git
+cd MadData26
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+venv\Scripts\activate  # Windows
 
 # Install dependencies
-pip install fastapi uvicorn mediapipe opencv-python scikit-learn \
-            xgboost pandas numpy anthropic python-multipart
-
-# Initialize database
-sqlite3 physique.db < backend/schema.sql
-
-# Set your API key
-export ANTHROPIC_API_KEY=your_key_here
+pip install -r backend/requirements.txt
 
 # Run the backend
 cd backend
-uvicorn main:app --reload
+uvicorn app.main:app --reload
 ```
 
 ### Frontend Setup
@@ -253,9 +265,10 @@ muscle_gaps (id, plan_id, muscle_group, current_kg, target_kg, gap_kg)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/analyze` | Upload photo + user data, runs full pipeline |
-| `GET` | `/plan/{user_id}` | Retrieve a user's transformation plan |
-| `POST` | `/refine` | Send follow-up to agent (adjust plan) |
+| `POST` | `/api/v1/prediction` | Upload photo + user data, runs full pipeline |
+| `GET` | `/api/v1/plan/{user_id}` | Retrieve a user's transformation plan |
+| `POST` | `/api/v1/progress` | Submit progress update |
+| `POST` | `/api/v1/auth` | Signup/login |
 
 ---
 
@@ -289,7 +302,7 @@ Built with 💪 at [Hackathon Name] by a team of 3.
 |---|---|
 | ML / CV Engineer | Pose extraction, feature engineering, regression models |
 | Backend Engineer | FastAPI, agent implementation, database |
-| Frontend Engineer | React dashboard, UI/UX, data visualization |
+| Frontend Engineer | Next.js dashboard, UI/UX, data visualization |
 
 ---
 
