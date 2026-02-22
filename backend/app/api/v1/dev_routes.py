@@ -22,7 +22,7 @@ async def test_cv(
     """
     try:
         # Helper to decode image
-        def decode_image(upload_file: UploadFile):
+        async def decode_image(upload_file: UploadFile):
             file_bytes = await upload_file.read()
             np_arr = np.frombuffer(file_bytes, np.uint8)
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
