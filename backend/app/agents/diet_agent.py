@@ -1,41 +1,71 @@
-# Generates diet recommendations based on body metrics and goals.
+# Claude-powered agents for diet, workout, and timeline plan generation.
+# Each agent takes structured user/analysis data, calls Claude, and returns
+# a dict that maps directly to the corresponding DB model fields.
 
-import sys
+import os
 import json
 import re
+import anthropic
 
-def main():
-    # Read the input file
-    input_file = sys.argv[1]
-    with open(input_file, 'r') as f:
-        data = json.load(f)
+_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+MODEL   = "claude-opus-4-6"
 
-    # Extract the body metrics and goals
-    body_metrics = data['body_metrics']
-    goals = data['goals']
 
-    # Generate the diet recommendations
-    recommendations = generate_diet_recommendations(body_metrics, goals)
+def _call_claude(system: str, user: str) -> dict:
+    """Call Claude and parse the JSON response. Raises ValueError on bad output."""
+    response = _client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    raw = response.content[0].text.strip()
+    # Strip markdown code fences if present
+    raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Claude returned invalid JSON: {e}\n\nRaw response:\n{raw}")
 
-    # Write the output file
-    output_file = sys.argv[2]
-    with open(output_file, 'w') as f:
-        json.dump(recommendations, f)
+DIET_SYSTEM = """
+You are an expert sports nutritionist and dietitian.
+Given a user profile and their body analysis, produce a personalised dietary plan.
+Respond ONLY with a valid JSON object — no explanation, no markdown, no preamble.
+Use exactly these keys:
+{
+  "tdee": <float, total daily energy expenditure in kcal>,
+  "daily_calories": <int, adjusted target calories>,
+  "caloric_strategy": <"bulk" | "cut" | "recomp">,
+  "caloric_adjustment": <int, e.g. 300 or -400>,
+  "protein_g": <int>,
+  "carbs_g": <int>,
+  "fats_g": <int>,
+  "meals_per_day": <int>,
+  "meal_complexity": <"simple" | "moderate" | "detailed">,
+  "water_intake_liters": <float>,
+  "cheat_meals_per_week": <int>,
+  "dietary_preference": <string or null>,
+  "foods_to_avoid": <string, comma-separated or null>,
+  "diet_reasoning": <string, 2-3 sentence explanation>
+}
+"""
 
-def generate_diet_recommendations(body_metrics, goals):
-    # Generate the diet recommendations based on the body metrics and goals
-    recommendations = []
-    for body_metric, goal in zip(body_metrics, goals):
-        recommendation = generate_diet_recommendation(body_metric, goal)
-        recommendations.append(recommendation)
-    return recommendations
+def run_diet_agent(user: dict, body_analysis: dict) -> dict:
+    """
+    user: dict of User model fields
+    body_analysis: dict of BodyAnalysis model fields
+    Returns dict ready to be saved as DietaryPlan.
+    """
+    prompt = f"""
+USER PROFILE:
+{json.dumps(user, indent=2)}
 
-def generate_diet_recommendation(body_metric, goal):
-    # Generate the diet recommendation based on the body metric and goal
-    recommendation = {}
-    recommendation['body_metric'] = body_metric
-    recommendation['goal'] = goal
-    return recommendation
+BODY ANALYSIS:
+{json.dumps(body_analysis, indent=2)}
 
-if __name__ == '__main__':
-    main()
+Generate the optimal dietary plan for this user based on their goal, body composition, and lifestyle.
+"""
+    return _call_claude(DIET_SYSTEM, prompt)
+
+
+
