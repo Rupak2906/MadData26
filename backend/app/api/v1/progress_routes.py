@@ -1,28 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import Column, Integer, Float, String, DateTime
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional
 
-from app.core.database import get_db, Base
+from app.core.database import get_db
 from app.core.security import verify_jwt_token
+from app.services.progress_service import (
+    Progress,
+    save_progress_entry,
+    get_progress_history,
+    compute_progress_metrics,
+)
 
 router = APIRouter(prefix="/progress", tags=["progress"])
-
-
-# Progress model
-class Progress(Base):
-    __tablename__ = "progress"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, nullable=False)
-    weight_kg = Column(Float, nullable=True)
-    body_fat_pct = Column(Float, nullable=True)
-    lean_mass_kg = Column(Float, nullable=True)
-    notes = Column(String, nullable=True)
-    submitted_at = Column(DateTime, default=func.now())
 
 
 class ProgressSubmit(BaseModel):
@@ -40,24 +30,9 @@ def get_current_user_id(token: str) -> int:
 
 @router.post("")
 def submit_progress(data: ProgressSubmit, token: str, db: Session = Depends(get_db)):
-    """Submit biweekly progress update."""
+    """Submit a biweekly progress update."""
     user_id = get_current_user_id(token)
-
-    lean_mass = None
-    if data.weight_kg and data.body_fat_pct:
-        lean_mass = round(data.weight_kg * (1 - data.body_fat_pct / 100), 2)
-
-    entry = Progress(
-        user_id=user_id,
-        weight_kg=data.weight_kg,
-        body_fat_pct=data.body_fat_pct,
-        lean_mass_kg=lean_mass,
-        notes=data.notes,
-    )
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
-
+    entry = save_progress_entry(db, user_id, data.weight_kg, data.body_fat_pct, data.notes)
     return {
         "id": entry.id,
         "user_id": entry.user_id,
@@ -70,17 +45,10 @@ def submit_progress(data: ProgressSubmit, token: str, db: Session = Depends(get_
 
 
 @router.get("/history")
-def get_progress_history(token: str, db: Session = Depends(get_db)):
-    """Get progress history."""
+def get_history(token: str, db: Session = Depends(get_db)):
+    """Get full progress history."""
     user_id = get_current_user_id(token)
-
-    entries = (
-        db.query(Progress)
-        .filter(Progress.user_id == user_id)
-        .order_by(Progress.submitted_at.asc())
-        .all()
-    )
-
+    entries = get_progress_history(db, user_id)
     return [
         {
             "id": e.id,
@@ -92,3 +60,11 @@ def get_progress_history(token: str, db: Session = Depends(get_db)):
         }
         for e in entries
     ]
+
+
+@router.get("/metrics")
+def get_metrics(token: str, db: Session = Depends(get_db)):
+    """Get computed progress metrics (trends, deltas, on-track status)."""
+    user_id = get_current_user_id(token)
+    entries = get_progress_history(db, user_id)
+    return compute_progress_metrics(entries)
