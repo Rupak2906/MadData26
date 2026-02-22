@@ -42,11 +42,26 @@ class CVService:
     REQUIRED_LANDMARKS = [
         "nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip",
         "left_elbow", "right_elbow", "left_wrist", "right_wrist",
-        "left_knee", "right_knee", "left_ankle", "right_ankle",
+        "left_knee", "right_knee",
     ]
+    REQUIRED_BY_POSE = {
+        # Front image can usually expose full upper body landmarks.
+        "front": [
+            "nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip",
+            "left_elbow", "right_elbow", "left_wrist", "right_wrist",
+            "left_knee", "right_knee",
+        ],
+        # Back image often hides wrists/elbows; keep only robust core landmarks required.
+        "back": [
+            "left_shoulder", "right_shoulder", "left_hip", "right_hip",
+            "left_knee", "right_knee",
+        ],
+    }
 
     LANDMARK_INDEX = {
         "nose": 0,
+        "left_eye": 2,
+        "right_eye": 5,
         "left_shoulder": 11,
         "right_shoulder": 12,
         "left_elbow": 13,
@@ -96,14 +111,57 @@ class CVService:
 
     def midpoint(self, a: Any, b: Any) -> Any:
         """Return a simple object at the midpoint of two landmarks."""
+        return self._point(
+            (a.x + b.x) / 2,
+            (a.y + b.y) / 2,
+            (getattr(a, "z", 0) + getattr(b, "z", 0)) / 2,
+            min(getattr(a, "visibility", 1), getattr(b, "visibility", 1)),
+        )
+
+    def _point(self, x: float, y: float, z: float = 0.0, visibility: float = 1.0) -> Any:
+        """Create a lightweight point object compatible with MediaPipe landmarks."""
         class _Point:
             pass
         p = _Point()
-        p.x = (a.x + b.x) / 2
-        p.y = (a.y + b.y) / 2
-        p.z = (getattr(a, "z", 0) + getattr(b, "z", 0)) / 2
-        p.visibility = min(getattr(a, "visibility", 1), getattr(b, "visibility", 1))
+        p.x = x
+        p.y = y
+        p.z = z
+        p.visibility = visibility
         return p
+
+    def _estimate_ankle(self, hip: Any, knee: Any) -> Any:
+        """
+        Estimate ankle position when it is missing/low-confidence.
+        Extends the hip->knee vector one more segment downward.
+        """
+        return self._point(
+            x=knee.x + (knee.x - hip.x) * 0.2,
+            y=knee.y + (knee.y - hip.y),
+            z=getattr(knee, "z", 0),
+            visibility=0.4,
+        )
+
+    def _estimate_elbow(self, shoulder: Any, hip: Any) -> Any:
+        """
+        Estimate elbow using shoulder->hip direction when arm landmarks are missing.
+        """
+        return self._point(
+            x=shoulder.x + (hip.x - shoulder.x) * 0.45,
+            y=shoulder.y + (hip.y - shoulder.y) * 0.45,
+            z=(getattr(shoulder, "z", 0) + getattr(hip, "z", 0)) / 2,
+            visibility=0.4,
+        )
+
+    def _estimate_wrist(self, elbow: Any, hip: Any) -> Any:
+        """
+        Estimate wrist by extending elbow->hip direction further down.
+        """
+        return self._point(
+            x=elbow.x + (hip.x - elbow.x) * 0.65,
+            y=elbow.y + (hip.y - elbow.y) * 0.65,
+            z=(getattr(elbow, "z", 0) + getattr(hip, "z", 0)) / 2,
+            visibility=0.35,
+        )
 
     # ── Validation ─────────────────────────────────────────────────────────────
 
@@ -126,9 +184,12 @@ class CVService:
                 "No person detected in the image. Ensure full-body visibility against a plain background."
             )
 
+        # Use pose-specific required landmarks.
+        required = self.REQUIRED_BY_POSE.get(pose_type, self.REQUIRED_LANDMARKS)
+
         # All required landmarks must be visible
         missing = [
-            name for name in self.REQUIRED_LANDMARKS
+            name for name in required
             if not self.landmark_visible(landmarks.get(name))
         ]
         if missing:
@@ -137,30 +198,13 @@ class CVService:
                 f"Could not detect: {', '.join(missing)}. Ensure good lighting and full-body photo."
             )
 
-        # Full body — ankles must be visible
-        if not (
-            self.landmark_visible(landmarks.get("left_ankle"))
-            and self.landmark_visible(landmarks.get("right_ankle"))
-        ):
-            raise ValidationError(
-                "rejected", "feet_not_visible",
-                "Please ensure your full body including feet is visible in the photo."
-            )
+        # Do not hard-reject on pose orientation. MediaPipe can misclassify
+        # front/back orientation for valid user photos, causing false negatives.
 
-        # Pose orientation check
-        nose = landmarks.get("nose")
-        ls = landmarks.get("left_shoulder")
-        rs = landmarks.get("right_shoulder")
-        if nose and ls and rs:
-            nose_between = min(ls.x, rs.x) < nose.x < max(ls.x, rs.x)
-            if pose_type == "front" and not nose_between:
-                raise ValidationError("rejected", "wrong_pose", "Please upload a FRONT-facing image.")
-            if pose_type == "back" and nose_between:
-                raise ValidationError("rejected", "wrong_pose", "Please upload a BACK-facing image.")
-
-    def validate_landmarks(self, landmarks: Dict[str, Any]) -> None:
+    def validate_landmarks(self, landmarks: Dict[str, Any], pose_type: str) -> None:
         """Validate landmark dict directly (used inside process_image)."""
-        for name in self.REQUIRED_LANDMARKS:
+        required = self.REQUIRED_BY_POSE.get(pose_type, self.REQUIRED_LANDMARKS)
+        for name in required:
             if not self.landmark_visible(landmarks.get(name)):
                 raise ValidationError(
                     "rejected", "low_confidence",
@@ -176,10 +220,26 @@ class CVService:
         nose = lm["nose"]
         ls, rs = lm["left_shoulder"], lm["right_shoulder"]
         lh, rh = lm["left_hip"], lm["right_hip"]
-        le, re = lm["left_elbow"], lm["right_elbow"]
-        lw, rw = lm["left_wrist"], lm["right_wrist"]
+        le = lm.get("left_elbow")
+        re = lm.get("right_elbow")
+        lw = lm.get("left_wrist")
+        rw = lm.get("right_wrist")
         lk, rk = lm["left_knee"], lm["right_knee"]
-        la, ra = lm["left_ankle"], lm["right_ankle"]
+        la = lm.get("left_ankle")
+        ra = lm.get("right_ankle")
+
+        if not self.landmark_visible(le):
+            le = self._estimate_elbow(ls, lh)
+        if not self.landmark_visible(re):
+            re = self._estimate_elbow(rs, rh)
+        if not self.landmark_visible(lw):
+            lw = self._estimate_wrist(le, lh)
+        if not self.landmark_visible(rw):
+            rw = self._estimate_wrist(re, rh)
+        if not self.landmark_visible(la):
+            la = self._estimate_ankle(lh, lk)
+        if not self.landmark_visible(ra):
+            ra = self._estimate_ankle(rh, rk)
 
         ankle_mid = self.midpoint(la, ra)
         body_height = self.calculate_distance(nose, ankle_mid)
@@ -268,5 +328,5 @@ class CVService:
                 "No person detected. Ensure a clear, well-lit, full-body photo."
             )
 
-        self.validate_landmarks(landmarks)
+        self.validate_landmarks(landmarks, pose_type)
         return self.compute_measurements(landmarks)

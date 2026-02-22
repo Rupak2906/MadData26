@@ -3,7 +3,9 @@ from fastapi import APIRouter, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 import numpy as np
 import cv2
+from io import BytesIO
 from typing import Any
+from PIL import Image, UnidentifiedImageError
 from app.services.cv_service import CVService, ValidationError, RawMeasurements
 
 router = APIRouter()
@@ -24,8 +26,17 @@ async def test_cv(
         # Helper to decode image
         async def decode_image(upload_file: UploadFile):
             file_bytes = await upload_file.read()
+            if not file_bytes:
+                return None
             np_arr = np.frombuffer(file_bytes, np.uint8)
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if img is not None:
+                return img
+            try:
+                pil = Image.open(BytesIO(file_bytes)).convert("RGB")
+                img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+            except (UnidentifiedImageError, OSError):
+                img = None
             return img
 
         # Decode both images

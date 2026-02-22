@@ -13,15 +13,17 @@ GET /predict/{scan_id}
   Returns a previously saved body analysis by ID.
 """
 
-from fastapi import APIRouter, UploadFile, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, Form, Depends, HTTPException, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import numpy as np
 import cv2
+from io import BytesIO
 from typing import Any
+from PIL import Image, UnidentifiedImageError
 
 from app.core.database import get_db
-from app.core.security import verify_jwt_token
+from app.core.security import verify_jwt_token, resolve_token
 from app.core.config import settings
 from app.models.user import User
 from app.services.cv_service import CVService, ValidationError, RawMeasurements
@@ -36,8 +38,9 @@ router = APIRouter(prefix="/predict", tags=["predict"])
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
 
-def get_current_user(token: str, db: Session) -> User:
-    user_id = verify_jwt_token(token)
+def get_current_user(token: str | None, authorization: str | None, db: Session) -> User:
+    jwt_token = resolve_token(token, authorization)
+    user_id = verify_jwt_token(jwt_token) if jwt_token else None
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query(User).filter(User.id == int(user_id)).first()
@@ -159,7 +162,8 @@ async def upload_and_predict(
     back_image: UploadFile,
     front_pose_type: str = Form(...),
     back_pose_type: str = Form(...),
-    token: str = Form(...),
+    token: str | None = Form(None),
+    authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> Any:
     """
@@ -168,15 +172,35 @@ async def upload_and_predict(
     """
 
     # 1. Authenticate
-    user = get_current_user(token, db)
+    user = get_current_user(token, authorization, db)
 
     # 2. Decode images
     async def decode(upload: UploadFile) -> np.ndarray:
         data = await upload.read()
+        if not data:
+            raise HTTPException(status_code=400, detail=f"Empty upload: {upload.filename}")
+
+        # Fast path: OpenCV decode
         arr = np.frombuffer(data, np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            return img
+
+        # Fallback: Pillow decode for formats OpenCV may fail on
+        try:
+            pil = Image.open(BytesIO(data)).convert("RGB")
+            img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+        except (UnidentifiedImageError, OSError):
+            img = None
+
         if img is None:
-            raise HTTPException(status_code=400, detail=f"Could not decode image: {upload.filename}")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Could not decode image: {upload.filename}. "
+                    "Please upload a valid JPG/PNG/WebP image."
+                ),
+            )
         return img
 
     img_front = await decode(front_image)
@@ -388,9 +412,15 @@ async def upload_and_predict(
 
 
 @router.get("/{scan_id}")
-def get_prediction(scan_id: int, token: str, db: Session = Depends(get_db)):
+def get_prediction(
+    scan_id: int,
+    token: str | None = None,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
     """Retrieve a saved body analysis by ID."""
-    user_id = verify_jwt_token(token)
+    jwt_token = resolve_token(token, authorization)
+    user_id = verify_jwt_token(jwt_token) if jwt_token else None
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 

@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
 
 from app.core.database import get_db
-from app.core.security import hash_password, verify_password, create_jwt_token, verify_jwt_token
+from app.core.security import (
+    hash_password,
+    verify_password,
+    create_jwt_token,
+    verify_jwt_token,
+    resolve_token,
+)
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -89,9 +95,14 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/me")
-def get_me(token: str, db: Session = Depends(get_db)):
+def get_me(
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
     """Get current authenticated user."""
-    user_id = verify_jwt_token(token)
+    jwt_token = resolve_token(token, authorization)
+    user_id = verify_jwt_token(jwt_token) if jwt_token else None
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 

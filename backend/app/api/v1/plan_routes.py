@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import verify_jwt_token
+from app.core.security import verify_jwt_token, resolve_token
 from app.core.config import settings
 from app.models.body_analysis import BodyAnalysis
 from app.models.user import User
@@ -17,8 +18,9 @@ from app.agents.timeline_agent import run_timeline_agent
 router = APIRouter(prefix="/plan", tags=["plan"])
 
 
-def get_current_user_id(token: str) -> int:
-    user_id = verify_jwt_token(token)
+def get_current_user_id(token: Optional[str], authorization: Optional[str]) -> int:
+    jwt_token = resolve_token(token, authorization)
+    user_id = verify_jwt_token(jwt_token) if jwt_token else None
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return int(user_id)
@@ -179,9 +181,13 @@ def _fallback_timeline(user: User, workout: dict, consistency: float | None) -> 
 
 
 @router.get("")
-def get_plan(token: str, db: Session = Depends(get_db)):
+def get_plan(
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
     """Fetch current workout/diet/timeline plan."""
-    user_id = get_current_user_id(token)
+    user_id = get_current_user_id(token, authorization)
 
     transformation = db.query(TransformationPlan).filter(
         TransformationPlan.user_id == user_id
@@ -207,9 +213,13 @@ def get_plan(token: str, db: Session = Depends(get_db)):
 
 
 @router.post("/regenerate")
-def regenerate_plan(token: str, db: Session = Depends(get_db)):
+def regenerate_plan(
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
     """Regenerate personalized plan from latest analysis/profile."""
-    user_id = get_current_user_id(token)
+    user_id = get_current_user_id(token, authorization)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

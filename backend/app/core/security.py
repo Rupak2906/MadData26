@@ -1,6 +1,7 @@
 import bcrypt
 import time
 import jwt
+from typing import Optional
 from app.core.config import settings
 
 
@@ -34,3 +35,19 @@ def verify_jwt_token(token: str) -> str | None:
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    """Extract token from Authorization header."""
+    if not authorization:
+        return None
+    value = authorization.strip()
+    if value.lower().startswith("bearer "):
+        return value.split(" ", 1)[1].strip() or None
+    # Also accept raw token header value for compatibility.
+    return value or None
+
+
+def resolve_token(token: Optional[str], authorization: Optional[str]) -> Optional[str]:
+    """Resolve JWT from query/form token or Authorization header."""
+    return token or extract_bearer_token(authorization)

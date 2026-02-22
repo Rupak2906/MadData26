@@ -31,13 +31,28 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
-    fetch(`${API_BASE_URL}/plan?token=${token}`)
-      .then(r => r.json())
+    const token = localStorage.getItem("token") || localStorage.getItem("access_token");
+    if (!token) {
+      navigate("/");
+      return;
+    }
+    fetch(`${API_BASE_URL}/plan`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+      .then(async (r) => {
+        if (r.status === 401) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("access_token");
+          navigate("/");
+          throw new Error("Session expired");
+        }
+        return r.json();
+      })
       .then(data => setPlan(data))
       .catch(() => {});
-  }, [API_BASE_URL]);
+  }, [API_BASE_URL, navigate]);
 
   // Pull real data from API or fall back to defaults
   const tp = plan?.transformation_plan;

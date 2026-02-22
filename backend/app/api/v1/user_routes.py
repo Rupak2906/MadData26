@@ -1,17 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
 
 from app.core.database import get_db
-from app.core.security import verify_jwt_token
+from app.core.security import verify_jwt_token, resolve_token
 from app.models.user import User
 
 router = APIRouter(prefix="/user", tags=["user"])
 
 
-def get_current_user(token: str, db: Session) -> User:
-    user_id = verify_jwt_token(token)
+def get_current_user(token: Optional[str], authorization: Optional[str], db: Session) -> User:
+    jwt_token = resolve_token(token, authorization)
+    user_id = verify_jwt_token(jwt_token) if jwt_token else None
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query(User).filter(User.id == int(user_id)).first()
@@ -54,9 +55,13 @@ class ProfileUpdate(BaseModel):
 
 
 @router.get("/profile")
-def get_profile(token: str, db: Session = Depends(get_db)):
+def get_profile(
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
     """Get user profile."""
-    user = get_current_user(token, db)
+    user = get_current_user(token, authorization, db)
     return {
         "user_id": user.id,
         "name": user.name,
@@ -96,9 +101,14 @@ def get_profile(token: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/profile")
-def update_profile(data: ProfileUpdate, token: str, db: Session = Depends(get_db)):
+def update_profile(
+    data: ProfileUpdate,
+    token: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
     """Update user profile."""
-    user = get_current_user(token, db)
+    user = get_current_user(token, authorization, db)
 
     for field, value in data.dict(exclude_none=True).items():
         setattr(user, field, value)

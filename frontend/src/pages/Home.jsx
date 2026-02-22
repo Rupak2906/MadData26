@@ -23,9 +23,13 @@ export default function Home() {
       const data = await res.json();
       if (res.ok) {
         if (data && data.user_id) {
+          const authToken = data.token || data.access_token || "";
           localStorage.setItem("user_id", data.user_id);
           localStorage.setItem("user_name", data.name);
-          localStorage.setItem("token", data.token);
+          if (authToken) {
+            localStorage.setItem("token", authToken);
+            localStorage.setItem("access_token", authToken);
+          }
         }
         setShowAuth(false);
         navigate("/intake");

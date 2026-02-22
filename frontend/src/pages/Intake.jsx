@@ -18,6 +18,23 @@ export default function Intake() {
   });
 
   const update = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
+  const SUPPORTED_IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+  const validateImageFile = (file, label) => {
+    if (!file) return null;
+    const name = (file.name || "").toLowerCase();
+    const type = (file.type || "").toLowerCase();
+    const isHeic = name.endsWith(".heic") || name.endsWith(".heif") || type === "image/heic" || type === "image/heif";
+    if (isHeic) {
+      alert(`${label} photo is HEIC/HEIF, which is not supported yet. Please convert it to JPG/PNG and re-upload.`);
+      return null;
+    }
+    if (!SUPPORTED_IMAGE_MIME.has(type)) {
+      alert(`${label} photo format is not supported. Please upload JPG, PNG, or WebP.`);
+      return null;
+    }
+    return file;
+  };
 
   const OptionButton = ({ field, value, label }) => (
     <button onClick={() => update(field, value)}
@@ -31,7 +48,7 @@ export default function Intake() {
   );
 
   const handleSubmit = async () => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem("token") || localStorage.getItem("access_token");
     if (!token) {
       alert("Session expired. Please sign in again.");
       navigate("/");
@@ -40,6 +57,12 @@ export default function Intake() {
 
     setSubmitting(true);
     try {
+      if (!photo || !backPhoto) {
+        alert("Please upload both front and back photos in JPG, PNG, or WebP format.");
+        setSubmitting(false);
+        return;
+      }
+
       const profilePayload = {
         biological_sex: formData.biological_sex || undefined,
         age: formData.age ? Number(formData.age) : undefined,
@@ -56,40 +79,78 @@ export default function Intake() {
         ideal_physique: formData.ideal_physique || undefined,
       };
 
-      const profileRes = await fetch(`${API_BASE_URL}/user/profile?token=${encodeURIComponent(token)}`, {
+      const profileRes = await fetch(`${API_BASE_URL}/user/profile`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(profilePayload),
       });
+      if (profileRes.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("access_token");
+        alert("Session expired. Please sign in again.");
+        navigate("/");
+        return;
+      }
       if (!profileRes.ok) {
         const data = await profileRes.json().catch(() => ({}));
         throw new Error(data.detail || "Failed to save intake profile");
       }
 
-      if (photo && backPhoto) {
-        const fd = new FormData();
-        fd.append("front_image", photo);
-        fd.append("back_image", backPhoto);
-        fd.append("front_pose_type", "front");
-        fd.append("back_pose_type", "back");
-        fd.append("token", token);
-        const predictRes = await fetch(`${API_BASE_URL}/predict`, {
-          method: "POST",
-          body: fd,
-        });
-        if (!predictRes.ok) {
-          const data = await predictRes.json().catch(() => ({}));
-          throw new Error(
-            data.detail || data.message || "Prediction failed. Please verify your photos and try again."
-          );
+      const fd = new FormData();
+      fd.append("front_image", photo);
+      fd.append("back_image", backPhoto);
+      fd.append("front_pose_type", "front");
+      fd.append("back_pose_type", "back");
+      fd.append("token", token);
+      const predictRes = await fetch(`${API_BASE_URL}/predict`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: fd,
+      });
+      if (predictRes.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("access_token");
+        alert("Session expired. Please sign in again.");
+        navigate("/");
+        return;
+      }
+      if (!predictRes.ok) {
+        const rawText = await predictRes.text().catch(() => "");
+        let data = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          data = {};
         }
-      } else {
-        const regenRes = await fetch(`${API_BASE_URL}/plan/regenerate?token=${encodeURIComponent(token)}`, {
+        const detailMessage = Array.isArray(data.details)
+          ? data.details.join(" | ")
+          : (data.detail || data.message || rawText || "").trim();
+
+        // Fallback: still generate a profile-based plan if CV prediction fails.
+        const regenRes = await fetch(`${API_BASE_URL}/plan/regenerate`, {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         });
-        if (!regenRes.ok) {
-          const data = await regenRes.json().catch(() => ({}));
-          throw new Error(data.detail || "Failed to generate plan");
+        if (regenRes.ok) {
+          alert(
+            detailMessage
+              ? `Photo scan failed (${predictRes.status}): ${detailMessage}. Generated a profile-based plan instead.`
+              : "Photo scan failed, but a profile-based plan was generated instead."
+          );
+        } else {
+          const regenData = await regenRes.json().catch(() => ({}));
+          throw new Error(
+            detailMessage ||
+            regenData.detail ||
+            `Prediction failed (${predictRes.status}).`
+          );
         }
       }
 
@@ -257,7 +318,13 @@ export default function Intake() {
                 </div>
               )}
             </div>
-            <input id="front-photo" type="file" accept="image/*" className="hidden" onChange={e => setPhoto(e.target.files[0])} />
+            <input
+              id="front-photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={e => setPhoto(validateImageFile(e.target.files?.[0], "Front"))}
+            />
           </div>
           <div>
             <label className="text-zinc-500 text-xs uppercase tracking-wider mb-3 block">
@@ -274,7 +341,13 @@ export default function Intake() {
                 </div>
               )}
             </div>
-            <input id="back-photo" type="file" accept="image/*" className="hidden" onChange={e => setBackPhoto(e.target.files[0])} />
+            <input
+              id="back-photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={e => setBackPhoto(validateImageFile(e.target.files?.[0], "Back"))}
+            />
           </div>
         </div>
       );
