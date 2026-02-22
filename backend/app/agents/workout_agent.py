@@ -1,9 +1,26 @@
-# Creates workout routines tailored to predicted body outcomes.
-
 import os
 import json
 import re
-import anthropic
+import google.generativeai as genai
+
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+MODEL = "gemini-2.0-flash"
+
+
+def _call_gemini(system: str, user: str) -> dict:
+    """Call Gemini and parse the JSON response. Raises ValueError on bad output."""
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=system,
+    )
+    response = model.generate_content(user)
+    raw = response.text.strip()
+    raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Gemini returned invalid JSON: {e}\n\nRaw response:\n{raw}")
+
 
 WORKOUT_SYSTEM = """
 You are an elite strength and conditioning coach and body transformation specialist.
@@ -29,8 +46,11 @@ Use exactly these keys:
 }
 """
 
+
 def run_workout_agent(user: dict, body_analysis: dict) -> dict:
     """
+    user: dict of User model fields
+    body_analysis: dict of BodyAnalysis model fields
     Returns dict ready to be saved as TransformationPlan.
     """
     prompt = f"""
@@ -43,4 +63,4 @@ BODY ANALYSIS:
 Estimate this user's peak natural physique potential and identify the transformation gaps.
 Consider their frame type, current FFMI, experience level, and primary goal.
 """
-    return _call_claude(WORKOUT_SYSTEM, prompt)
+    return _call_gemini(WORKOUT_SYSTEM, prompt)

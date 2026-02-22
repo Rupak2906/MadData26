@@ -9,6 +9,8 @@ class User(Base):
 
     # Basic info
     name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False)   # add this too if missing
+    password = Column(String, nullable=False)
     age = Column(Integer, nullable=False)
     biological_sex = Column(String, nullable=False)      # male / female
 

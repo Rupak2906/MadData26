@@ -1,31 +1,27 @@
-# Claude-powered agents for diet, workout, and timeline plan generation.
-# Each agent takes structured user/analysis data, calls Claude, and returns
-# a dict that maps directly to the corresponding DB model fields.
-
 import os
 import json
 import re
-import anthropic
+import google.generativeai as genai
 
-_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-MODEL   = "claude-opus-4-6"
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+MODEL = "gemini-2.0-flash"
 
 
-def _call_claude(system: str, user: str) -> dict:
-    """Call Claude and parse the JSON response. Raises ValueError on bad output."""
-    response = _client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        system=system,
-        messages=[{"role": "user", "content": user}],
+def _call_gemini(system: str, user: str) -> dict:
+    """Call Gemini and parse the JSON response. Raises ValueError on bad output."""
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=system,
     )
-    raw = response.content[0].text.strip()
+    response = model.generate_content(user)
+    raw = response.text.strip()
     # Strip markdown code fences if present
     raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Claude returned invalid JSON: {e}\n\nRaw response:\n{raw}")
+        raise ValueError(f"Gemini returned invalid JSON: {e}\n\nRaw response:\n{raw}")
+
 
 DIET_SYSTEM = """
 You are an expert sports nutritionist and dietitian.
@@ -50,6 +46,7 @@ Use exactly these keys:
 }
 """
 
+
 def run_diet_agent(user: dict, body_analysis: dict) -> dict:
     """
     user: dict of User model fields
@@ -65,7 +62,4 @@ BODY ANALYSIS:
 
 Generate the optimal dietary plan for this user based on their goal, body composition, and lifestyle.
 """
-    return _call_claude(DIET_SYSTEM, prompt)
-
-
-
+    return _call_gemini(DIET_SYSTEM, prompt)

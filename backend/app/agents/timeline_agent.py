@@ -1,9 +1,26 @@
-# Estimates achievable timelines and milestones.
-
 import os
 import json
 import re
-import anthropic
+import google.generativeai as genai
+
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+MODEL = "gemini-2.0-flash"
+
+
+def _call_gemini(system: str, user: str) -> dict:
+    """Call Gemini and parse the JSON response. Raises ValueError on bad output."""
+    model = genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=system,
+    )
+    response = model.generate_content(user)
+    raw = response.text.strip()
+    raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Gemini returned invalid JSON: {e}\n\nRaw response:\n{raw}")
+
 
 TIMELINE_SYSTEM = """
 You are a fitness coach specialising in realistic body transformation timelines.
@@ -16,7 +33,7 @@ Use exactly these keys:
   "total_months_realistic": <int>,
   "total_months_conservative": <int>,
   "confidence_level": <"low" | "medium" | "high">,
-  "consistency_score": <float, 0.0–1.0>,
+  "consistency_score": <float, 0.0-1.0>,
   "consistency_impact": <string, e.g. "Increasing consistency to 80% could save 3 months">,
   "phase_1_goal": <string>,
   "phase_1_months": <int>,
@@ -32,6 +49,7 @@ Use exactly these keys:
   "milestone_3_description": <string>
 }
 """
+
 
 def run_timeline_agent(user: dict, transformation_plan: dict, dietary_plan: dict) -> dict:
     """
@@ -51,4 +69,4 @@ Estimate realistic transformation timelines and milestones. Factor in the user's
 consistency score ({user.get('consistency_score', 0.7)}), experience level, and
 the size of their transformation gap.
 """
-    return _call_claude(TIMELINE_SYSTEM, prompt)
+    return _call_gemini(TIMELINE_SYSTEM, prompt)

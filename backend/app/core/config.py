@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 
 class Settings(BaseSettings):
-    ANTHROPIC_API_KEY: str
+    GEMINI_API_KEY: str
     JWT_SECRET: str
     DATABASE_URL: str
     JWT_EXPIRATION_SECONDS: int = 3600
