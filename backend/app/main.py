@@ -1,24 +1,30 @@
-# Starts FastAPI app, registers routes, middleware, and initializes services.
-
 from fastapi import FastAPI
-from app.api.v1.auth_routes import router as auth_router
-from app.api.v1.user_routes import router as user_router
-from app.api.v1.prediction_routes import router as prediction_router
-from app.api.v1.plan_routes import router as plan_router
-from app.api.v1.progress_routes import router as progress_router
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.database import engine, Base
+from app.models import User, BodyAnalysis, TransformationPlan, Timeline, DietaryPlan
+from app.api.v1 import auth_routes
 
-app = FastAPI(title="Ideal Body AI")
+Base.metadata.create_all(bind=engine)
 
-app.include_router(auth_router)
-app.include_router(user_router)
-app.include_router(prediction_router)
-app.include_router(plan_router)
-app.include_router(progress_router)
+app = FastAPI(
+    title="AI Physique Predictor",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_routes.router)
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to Ideal Body AI!"}
+    return {"status": "running", "message": "AI Physique Predictor API"}
 
-@app.get("/favicon.ico", include_in_schema=False)
-async def favicon():
-    return {}
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
