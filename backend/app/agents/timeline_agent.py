@@ -1,37 +1,54 @@
 # Estimates achievable timelines and milestones.
 
+import os
+import json
 import re
-import sys
-from collections import defaultdict
+import anthropic
 
-def parse_input(input_file):
-    """Parse the input file and return a list of tuples."""
-    lines = []
-    with open(input_file, 'r') as f:
-        for line in f:
-            lines.append(line.strip())
-    return lines
+TIMELINE_SYSTEM = """
+You are a fitness coach specialising in realistic body transformation timelines.
+Given a user profile, their transformation plan, and dietary plan, estimate achievable timelines
+and phase milestones.
+Respond ONLY with a valid JSON object — no explanation, no markdown, no preamble.
+Use exactly these keys:
+{
+  "total_months_optimistic": <int>,
+  "total_months_realistic": <int>,
+  "total_months_conservative": <int>,
+  "confidence_level": <"low" | "medium" | "high">,
+  "consistency_score": <float, 0.0–1.0>,
+  "consistency_impact": <string, e.g. "Increasing consistency to 80% could save 3 months">,
+  "phase_1_goal": <string>,
+  "phase_1_months": <int>,
+  "phase_2_goal": <string or null>,
+  "phase_2_months": <int or null>,
+  "phase_3_goal": <string or null>,
+  "phase_3_months": <int or null>,
+  "milestone_1_month": <int>,
+  "milestone_1_description": <string>,
+  "milestone_2_month": <int>,
+  "milestone_2_description": <string>,
+  "milestone_3_month": <int>,
+  "milestone_3_description": <string>
+}
+"""
 
-def extract_numbers(text):
-    """Extract numbers from text."""
-    numbers = re.findall(r'\d+', text)
-    return [int(num) for num in numbers]
+def run_timeline_agent(user: dict, transformation_plan: dict, dietary_plan: dict) -> dict:
+    """
+    Returns dict ready to be saved as Timeline.
+    """
+    prompt = f"""
+USER PROFILE:
+{json.dumps(user, indent=2)}
 
-def calculate_timeline(lines):
-    """Calculate the timeline."""
-    timeline = defaultdict(int)
-    for line in lines:
-        numbers = extract_numbers(line)
-        if numbers:
-            timeline[line] = numbers[0]
-    return timeline
+TRANSFORMATION PLAN:
+{json.dumps(transformation_plan, indent=2)}
 
-def main(input_file):
-    """Main function."""
-    lines = parse_input(input_file)
-    timeline = calculate_timeline(lines)
-    print(timeline)
+DIETARY PLAN:
+{json.dumps(dietary_plan, indent=2)}
 
-if __name__ == '__main__':
-    input_file = sys.argv[1]
-    main(input_file)
+Estimate realistic transformation timelines and milestones. Factor in the user's
+consistency score ({user.get('consistency_score', 0.7)}), experience level, and
+the size of their transformation gap.
+"""
+    return _call_claude(TIMELINE_SYSTEM, prompt)

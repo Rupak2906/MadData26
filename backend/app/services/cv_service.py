@@ -1,7 +1,4 @@
-<<<<<<< HEAD
 # Runs OpenCV/Mediapipe processing and extracts body measurements.
-
-=======
 import numpy as np
 from typing import Dict, Any, Tuple, Optional
 from dataclasses import dataclass
@@ -246,4 +243,4 @@ class CVService:
         self.validate_landmarks(landmarks)
         return self.compute_measurements(landmarks)
 # Runs OpenCV/Mediapipe processing and extracts body measurements.
->>>>>>> 51405a0d51f5774366816b6c3934d7d71bc5016d
+
