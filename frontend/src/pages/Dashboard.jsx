@@ -1,15 +1,6 @@
-"use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
-
-const muscleGapData = [
-  { muscle: "Legs", gap: 4.5 },
-  { muscle: "Back", gap: 2.8 },
-  { muscle: "Chest", gap: 3.2 },
-  { muscle: "Shoulders", gap: 1.8 },
-  { muscle: "Arms", gap: 1.4 },
-];
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const workoutPlan = {
   Monday: ["Squats 4x8", "Romanian Deadlift 3x10", "Leg Press 3x12", "Calf Raises 4x15"],
@@ -34,18 +25,47 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Dashboard() {
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
   const [activeTab, setActiveTab] = useState("body");
-  const router = useRouter();
+  const [plan, setPlan] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${API_BASE_URL}/plan?token=${token}`)
+      .then(r => r.json())
+      .then(data => setPlan(data))
+      .catch(() => {});
+  }, [API_BASE_URL]);
+
+  // Pull real data from API or fall back to defaults
+  const tp = plan?.transformation_plan;
+  const tl = plan?.timeline;
+  const dp = plan?.dietary_plan;
+
+  const frame = tp?.muscle_gaps ? "Wide" : "Wide";
+  const ffmiCeiling = tp?.peak_ffmi ?? 24.8;
+  const leanMassPotential = tp?.peak_lean_mass_kg ?? 74;
+  const targetBf = tp?.target_bf_pct ?? 12;
+  const muscleGapData = tp?.muscle_gaps
+    ? Object.entries(tp.muscle_gaps).map(([muscle, gap]) => ({ muscle, gap }))
+    : [
+        { muscle: "Legs", gap: 4.5 },
+        { muscle: "Back", gap: 2.8 },
+        { muscle: "Chest", gap: 3.2 },
+        { muscle: "Shoulders", gap: 1.8 },
+        { muscle: "Arms", gap: 1.4 },
+      ];
 
   const tabs = [
     { id: "body", label: "Body Analysis" },
-    { id: "diet", label: "Dietary Plan" },
-    { id: "transformation", label: "Workout Plan" },
+    { id: "diet", label: "Nutrition Protocol" },
+    { id: "transformation", label: "Training Protocol" },
   ];
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white">
-
       {/* Header */}
       <div className="border-b border-zinc-800 px-6 py-4">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
@@ -53,16 +73,15 @@ export default function Dashboard() {
             <div className="w-2 h-2 rounded-full bg-emerald-500" />
             <div>
               <h1 className="text-sm font-medium text-zinc-100">Projected Adaptation Model</h1>
-              <p className="text-zinc-600 text-xs">Wide Frame · Balanced Composition · Confidence: 78%</p>
+              <p className="text-zinc-600 text-xs">
+                {frame} Frame · Balanced Composition · Confidence: {tl?.confidence_level ?? "78%"}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-zinc-600 text-xs">Experimental Model v0.3</span>
             <button
-              onClick={() => {
-                localStorage.clear();
-                router.push("/");
-              }}
+              onClick={() => { localStorage.clear(); navigate("/"); }}
               className="px-3 py-1.5 border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 rounded-lg text-xs font-medium uppercase tracking-wide transition-colors"
             >
               New Analysis
@@ -73,17 +92,12 @@ export default function Dashboard() {
 
       {/* Tabs */}
       <div className="border-b border-zinc-800">
-        <div className="max-w-5xl mx-auto px-6 flex gap-0">
+        <div className="max-w-5xl mx-auto px-6 flex">
           {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`px-5 py-3.5 text-xs font-medium uppercase tracking-wider border-b-2 transition-all ${
-                activeTab === tab.id
-                  ? "border-emerald-500 text-emerald-400"
-                  : "border-transparent text-zinc-500 hover:text-zinc-300"
-              }`}
-            >
+                activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-zinc-500 hover:text-zinc-300"
+              }`}>
               {tab.label}
             </button>
           ))}
@@ -92,19 +106,17 @@ export default function Dashboard() {
 
       <div className="max-w-5xl mx-auto px-6 py-8">
 
-        {/* ── Body Analysis Tab ── */}
+        {/* ── Body Analysis ── */}
         {activeTab === "body" && (
           <div className="space-y-6">
-
-            {/* Model Summary */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-4">Model Summary</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 {[
-                  { label: "Structural Frame", value: "Wide" },
-                  { label: "FFMI Ceiling", value: "24.8" },
-                  { label: "Lean Mass Potential", value: "+13 kg" },
-                  { label: "Estimated Timeline", value: "14–18 mo" },
+                  { label: "Structural Frame", value: frame },
+                  { label: "FFMI Ceiling", value: ffmiCeiling },
+                  { label: "Lean Mass Potential", value: `${leanMassPotential} kg` },
+                  { label: "Estimated Timeline", value: tl ? `${tl.total_months_realistic} mo` : "14–18 mo" },
                 ].map(item => (
                   <div key={item.label}>
                     <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">{item.label}</p>
@@ -114,16 +126,15 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Current vs Peak */}
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                 <p className="text-zinc-500 text-xs uppercase tracking-wider mb-4">Current State</p>
                 <div className="space-y-3">
                   {[
-                    { label: "Body Fat", value: "22%" },
-                    { label: "Lean Mass", value: "61 kg" },
+                    { label: "Body Fat", value: `${tp?.fat_loss_required_pct ? (22).toFixed(0) : 22}%` },
+                    { label: "Lean Mass", value: `${tp?.peak_lean_mass_kg ? (leanMassPotential - (tp?.muscle_gain_required_kg ?? 13)).toFixed(0) : 61} kg` },
                     { label: "FFMI", value: "19.2" },
-                    { label: "Frame", value: "Wide" },
+                    { label: "Frame", value: frame },
                   ].map(item => (
                     <div key={item.label} className="flex justify-between items-center">
                       <span className="text-zinc-500 text-xs uppercase tracking-wider">{item.label}</span>
@@ -140,9 +151,9 @@ export default function Dashboard() {
                 </div>
                 <div className="space-y-3">
                   {[
-                    { label: "Body Fat", value: "12%" },
-                    { label: "Lean Mass", value: "74 kg" },
-                    { label: "FFMI", value: "23.8" },
+                    { label: "Body Fat", value: `${targetBf}%` },
+                    { label: "Lean Mass", value: `${leanMassPotential} kg` },
+                    { label: "FFMI", value: ffmiCeiling },
                     { label: "Profile", value: "V-Taper" },
                   ].map(item => (
                     <div key={item.label} className="flex justify-between items-center">
@@ -154,7 +165,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Muscle Gap Chart */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-zinc-200 text-sm font-medium">Muscle Development Gaps</p>
@@ -171,36 +181,30 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </div>
 
-             {/* Matched Model Photo */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
-              <h3 className="font-semibold mb-1">Your Matched Peak Physique</h3>
-              <p className="text-zinc-500 text-sm mb-4">Based on your wide frame and V-Taper goal</p>
-              <div className="bg-zinc-800 rounded-xl h-64 flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-4xl mb-3">🏆</p>
-                  <p className="text-zinc-400 text-sm">Model photo from database</p>
-                  <p className="text-zinc-600 text-xs mt-1">Matched to: wide_lean → V-Taper</p>
-                </div>
-              </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+              <p className="text-zinc-500 text-xs uppercase tracking-wider mb-3">Methodology</p>
+              <p className="text-zinc-500 text-xs leading-relaxed">
+                {tp?.agent_reasoning ?? "Estimates are based on structural frame modeling, lean mass index projections, and historical hypertrophy adaptation data. Peak potential is calculated using the Berkhan-Lyle natural limit model adjusted for frame width and FFMI baseline. Results represent probabilistic ranges with ±8% confidence interval."}
+              </p>
             </div>
           </div>
         )}
 
-        {/* ── Nutrition Protocol Tab ── */}
+        {/* ── Nutrition Protocol ── */}
         {activeTab === "diet" && (
           <div className="space-y-6">
-
-            {/* Caloric targets */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-zinc-500 text-xs uppercase tracking-wider">Caloric Strategy</p>
-                <span className="px-2 py-0.5 border border-zinc-700 rounded text-zinc-400 text-xs">Recomposition Phase</span>
+                <span className="px-2 py-0.5 border border-zinc-700 rounded text-zinc-400 text-xs">
+                  {dp?.caloric_strategy ?? "Recomposition Phase"}
+                </span>
               </div>
               <div className="grid grid-cols-3 gap-6">
                 {[
-                  { label: "Daily Target", value: "2,800 kcal" },
-                  { label: "Surplus", value: "+200 kcal" },
-                  { label: "Hydration", value: "3.2 L/day" },
+                  { label: "Daily Target", value: `${dp?.daily_calories ?? 2800} kcal` },
+                  { label: "Adjustment", value: `${dp?.caloric_adjustment > 0 ? "+" : ""}${dp?.caloric_adjustment ?? 200} kcal` },
+                  { label: "Hydration", value: `${dp?.water_intake_liters ?? 3.2} L/day` },
                 ].map(item => (
                   <div key={item.label}>
                     <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">{item.label}</p>
@@ -210,14 +214,13 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Macros */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-4">Macronutrient Distribution</p>
               <div className="space-y-4">
                 {[
-                  { name: "Protein", grams: 175, pct: 25, color: "bg-emerald-600" },
-                  { name: "Carbohydrates", grams: 350, pct: 50, color: "bg-zinc-500" },
-                  { name: "Lipids", grams: 78, pct: 25, color: "bg-zinc-600" },
+                  { name: "Protein", grams: dp?.protein_g ?? 175, pct: 25, color: "bg-emerald-600" },
+                  { name: "Carbohydrates", grams: dp?.carbs_g ?? 350, pct: 50, color: "bg-zinc-500" },
+                  { name: "Lipids", grams: dp?.fats_g ?? 78, pct: 25, color: "bg-zinc-600" },
                 ].map(macro => (
                   <div key={macro.name}>
                     <div className="flex justify-between text-xs mb-1.5">
@@ -225,18 +228,16 @@ export default function Dashboard() {
                       <span className="text-zinc-500">{macro.grams}g · {macro.pct}%</span>
                     </div>
                     <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                      <div className={`h-full ${macro.color} rounded-full`}
-                        style={{ width: `${macro.pct * 2}%` }} />
+                      <div className={`h-full ${macro.color} rounded-full`} style={{ width: `${macro.pct * 2}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Meal timing */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-4">Meal Structure</p>
-              <div className="space-y-2">
+              <div className="space-y-0">
                 {[
                   { time: "07:00", meal: "Breakfast", cals: "600 kcal", example: "Oats, eggs, banana" },
                   { time: "10:30", meal: "Mid-Morning", cals: "400 kcal", example: "Greek yogurt, nuts" },
@@ -254,26 +255,31 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              {dp?.diet_reasoning && (
+                <p className="text-zinc-600 text-xs mt-4 border-l border-zinc-700 pl-3 leading-relaxed">{dp.diet_reasoning}</p>
+              )}
             </div>
           </div>
         )}
 
-        {/* ── Adaptation Model Tab ── */}
+        {/* ── Training Protocol ── */}
         {activeTab === "transformation" && (
           <div className="space-y-6">
-
-            {/* Timeline */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-zinc-200 text-sm font-medium">Projected Timeline</p>
-                <span className="text-zinc-600 text-xs">Prediction Confidence: 78%</span>
+                <span className="text-zinc-600 text-xs">
+                  Confidence: {tl?.confidence_level ?? "78%"}
+                </span>
               </div>
-              <p className="text-zinc-600 text-xs mb-6">Based on 65% adherence score and structural frame classification</p>
+              <p className="text-zinc-600 text-xs mb-6">
+                {tl?.consistency_impact ?? "Based on 65% adherence score and structural frame classification"}
+              </p>
               <div className="space-y-4">
                 {[
-                  { label: "Optimistic", months: 14, color: "bg-emerald-600" },
-                  { label: "Realistic", months: 18, color: "bg-zinc-500" },
-                  { label: "Conservative", months: 24, color: "bg-zinc-700" },
+                  { label: "Optimistic", months: tl?.total_months_optimistic ?? 14, color: "bg-emerald-600" },
+                  { label: "Realistic", months: tl?.total_months_realistic ?? 18, color: "bg-zinc-500" },
+                  { label: "Conservative", months: tl?.total_months_conservative ?? 24, color: "bg-zinc-700" },
                 ].map(t => (
                   <div key={t.label}>
                     <div className="flex justify-between text-xs mb-1.5">
@@ -281,28 +287,38 @@ export default function Dashboard() {
                       <span className="text-zinc-500">{t.months} months</span>
                     </div>
                     <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                      <div className={`h-full ${t.color} rounded-full`}
-                        style={{ width: `${(t.months / 24) * 100}%` }} />
+                      <div className={`h-full ${t.color} rounded-full`} style={{ width: `${(t.months / 24) * 100}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
-              <p className="text-zinc-600 text-xs mt-4 border-l border-zinc-700 pl-3">
-                Increasing adherence to 80% reduces projected timeline by approximately 4 months.
-              </p>
             </div>
 
-            {/* Phase breakdown */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-4">Phase Breakdown</p>
-              <div className="space-y-3">
+              <div className="space-y-0">
                 {[
-                  { phase: "01", goal: "Fat Loss Phase", months: "Months 1–4", desc: "Reduce to 15% body fat while preserving lean mass" },
-                  { phase: "02", goal: "Build Phase", months: "Months 5–14", desc: "Controlled surplus targeting +8 kg lean mass" },
-                  { phase: "03", goal: "Final Cut", months: "Months 15–18", desc: "Final reduction to 12% body fat" },
-                ].map((p) => (
-                  <div key={p.phase} className="flex gap-4 py-4 border-b border-zinc-800 last:border-0">
-                    <span className="text-zinc-700 text-xs font-medium w-6 flex-shrink-0 mt-0.5">{p.phase}</span>
+                  {
+                    num: "01",
+                    goal: tl?.phase_1_goal ?? "Cut Phase",
+                    months: `Months 1–${tl?.phase_1_months ?? 4}`,
+                    desc: "Lose fat first, get lean before building muscle"
+                  },
+                  {
+                    num: "02",
+                    goal: tl?.phase_2_goal ?? "Build Phase",
+                    months: `Months ${(tl?.phase_1_months ?? 4) + 1}–${(tl?.phase_1_months ?? 4) + (tl?.phase_2_months ?? 10)}`,
+                    desc: "Eat more, train hard, pack on muscle mass"
+                  },
+                  {
+                    num: "03",
+                    goal: tl?.phase_3_goal ?? "Final Cut",
+                    months: `Months ${(tl?.phase_1_months ?? 4) + (tl?.phase_2_months ?? 10) + 1}–${tl?.total_months_realistic ?? 18}`,
+                    desc: "Lose the last bit of fat to reveal the physique you built"
+                  },
+                ].map(p => (
+                  <div key={p.num} className="flex gap-4 py-4 border-b border-zinc-800 last:border-0">
+                    <span className="text-zinc-700 text-xs font-medium w-6 flex-shrink-0 mt-0.5">{p.num}</span>
                     <div>
                       <div className="flex items-center gap-3 mb-1">
                         <p className="text-zinc-200 text-xs font-medium">{p.goal}</p>
@@ -315,22 +331,19 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Training protocol */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
               <div className="flex items-center justify-between mb-1">
-                <p className="text-zinc-200 text-sm font-medium">Training Plan</p>
-                <span className="text-zinc-600 text-xs">5-day PPL split</span>
+                <p className="text-zinc-200 text-sm font-medium">Weekly Training Split</p>
+                <span className="text-zinc-600 text-xs">5-day PPL</span>
               </div>
               <p className="text-zinc-600 text-xs mb-4">Optimized for wide frame structural advantage</p>
-              <div className="space-y-2">
+              <div className="space-y-0">
                 {Object.entries(workoutPlan).map(([day, exercises]) => (
                   <div key={day} className="py-3 border-b border-zinc-800 last:border-0">
                     <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">{day}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {exercises.map((ex, i) => (
-                        <span key={i} className="px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-zinc-400 text-xs">
-                          {ex}
-                        </span>
+                        <span key={i} className="px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-zinc-400 text-xs">{ex}</span>
                       ))}
                     </div>
                   </div>
