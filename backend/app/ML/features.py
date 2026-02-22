@@ -7,6 +7,11 @@ from raw MediaPipe keypoints + user form inputs.
 
 import numpy as np
 from dataclasses import dataclass, asdict
+<<<<<<< HEAD
+=======
+from typing import Optional
+
+>>>>>>> ML
 
 # 1. Raw keypoint measurements (from CV pipeline)
 
