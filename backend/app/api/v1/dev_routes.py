@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 import numpy as np
@@ -9,25 +10,76 @@ router = APIRouter()
 
 @router.post("/dev/test-cv", response_model=None)
 async def test_cv(
-    image: UploadFile,
-    pose_type: str = Form(...)
+    front_image: UploadFile,
+    back_image: UploadFile,
+    front_pose_type: str = Form(...),
+    back_pose_type: str = Form(...)
 ) -> Any:
     """
-    Temporary development endpoint for testing CVService body measurement extraction.
-    Accepts an image and pose_type, runs the CV pipeline, and returns RawMeasurements as JSON.
-    No ML, database, or authentication involved.
+    Development endpoint for testing CVService body measurement extraction with two images (front and back).
+    Validates that both images are present, checks pose types, and ensures all required features are visible.
+    If valid, extracts features and (optionally) sends to ML/AI for further processing.
     """
     try:
-        file_bytes = await image.read()
-        np_arr = np.frombuffer(file_bytes, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise HTTPException(status_code=400, detail={"status": "rejected", "message": "Invalid image file."})
+        # Helper to decode image
+        def decode_image(upload_file: UploadFile):
+            file_bytes = await upload_file.read()
+            np_arr = np.frombuffer(file_bytes, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            return img
+
+        # Decode both images
+        img_front = await decode_image(front_image)
+        img_back = await decode_image(back_image)
+        if img_front is None or img_back is None:
+            raise HTTPException(status_code=400, detail={"status": "rejected", "message": "Invalid image file(s)."})
+
+        # Validate pose types
+        valid_poses = {"front", "back"}
+        if front_pose_type.lower() != "front" or back_pose_type.lower() != "back":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "rejected",
+                    "message": "Pose types must be 'front' and 'back' respectively."
+                }
+            )
 
         cv_service = CVService()
-        measurements: RawMeasurements = cv_service.process_image(img, pose_type)
 
-        return JSONResponse(content=measurements.__dict__)
+        # Validate features in both images (placeholder: implement actual feature checks in CVService)
+        missing_features = []
+        try:
+            features_front = cv_service.validate_features(img_front, pose_type="front")
+        except ValidationError as ve:
+            missing_features.append(f"front: {ve.message}")
+        try:
+            features_back = cv_service.validate_features(img_back, pose_type="back")
+        except ValidationError as ve:
+            missing_features.append(f"back: {ve.message}")
+
+        if missing_features:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "rejected",
+                    "message": "Image validation failed.",
+                    "details": missing_features
+                }
+            )
+
+        # Extract measurements from both images
+        measurements_front: RawMeasurements = cv_service.process_image(img_front, "front")
+        measurements_back: RawMeasurements = cv_service.process_image(img_back, "back")
+
+        # Optionally: send features/measurements to ML/AI for prediction or data generation
+        # result = your_ml_model.predict({...})
+
+        return JSONResponse(content={
+            "front_measurements": measurements_front.__dict__,
+            "back_measurements": measurements_back.__dict__
+            # , "ml_result": result
+        })
 
     except ValidationError as ve:
         return JSONResponse(
@@ -39,7 +91,6 @@ async def test_cv(
             }
         )
     except Exception as e:
-        # For development: log and return the actual error message for easier debugging
         import traceback
         traceback.print_exc()
         return JSONResponse(
