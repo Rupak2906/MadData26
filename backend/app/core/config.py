@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     JWT_EXPIRATION_SECONDS: int = 3600
 
     model_config = SettingsConfigDict(
-        env_file=(ROOT_DIR / ".env", BACKEND_DIR / ".env"),
+        env_file=BACKEND_DIR / ".env",
         extra="ignore",
     )
 

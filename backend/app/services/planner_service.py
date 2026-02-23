@@ -1,7 +1,7 @@
 """
 planner_service.py
 ------------------
-Combines outputs from the three Claude agents and persists them to the database.
+Combines outputs from the three deterministic plan modules and persists them to the database.
 Acts as the bridge between ai_agent.py and the individual plan_service savers.
 """
 

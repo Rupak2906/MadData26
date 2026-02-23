@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_jwt_token, resolve_token
-from app.core.config import settings
 from app.models.body_analysis import BodyAnalysis
 from app.models.user import User
 from app.models.transformation_plan import TransformationPlan
@@ -234,28 +233,9 @@ def regenerate_plan(
     user_dict = _build_user_dict(user)
     analysis_dict = _analysis_from_profile(user, latest_analysis)
 
-    gemini_key = (settings.GEMINI_API_KEY or "").strip()
-    use_agents = bool(gemini_key) and not gemini_key.lower().startswith("dummy")
-
-    if use_agents:
-        try:
-            workout_data = run_workout_agent(user_dict, analysis_dict)
-        except Exception:
-            workout_data = _fallback_workout(user, analysis_dict)
-
-        try:
-            diet_data = run_diet_agent(user_dict, analysis_dict)
-        except Exception:
-            diet_data = _fallback_diet(user, workout_data)
-
-        try:
-            timeline_data = run_timeline_agent(user_dict, workout_data, diet_data)
-        except Exception:
-            timeline_data = _fallback_timeline(user, workout_data, user.consistency_score)
-    else:
-        workout_data = _fallback_workout(user, analysis_dict)
-        diet_data = _fallback_diet(user, workout_data)
-        timeline_data = _fallback_timeline(user, workout_data, user.consistency_score)
+    workout_data = run_workout_agent(user_dict, analysis_dict)
+    diet_data = run_diet_agent(user_dict, analysis_dict)
+    timeline_data = run_timeline_agent(user_dict, workout_data, diet_data)
 
     transformation_plan = save_transformation_plan(
         db, user_id, {k: v for k, v in workout_data.items() if k in _WORKOUT_KEYS}

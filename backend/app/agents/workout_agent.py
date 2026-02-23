@@ -1,68 +1,43 @@
-import os
 import json
-import re
-import google.generativeai as genai
-import google.generativeai as genai
-from app.core.config import settings
-
-genai.configure(api_key=settings.GEMINI_API_KEY)
-MODEL = "gemini-2.0-flash"
-
-
-def _call_gemini(system: str, user: str) -> dict:
-    """Call Gemini and parse the JSON response. Raises ValueError on bad output."""
-    model = genai.GenerativeModel(
-        model_name=MODEL,
-        system_instruction=system,
-    )
-    response = model.generate_content(user)
-    raw = response.text.strip()
-    raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Gemini returned invalid JSON: {e}\n\nRaw response:\n{raw}")
-
-
-WORKOUT_SYSTEM = """
-You are an elite strength and conditioning coach and body transformation specialist.
-Given a user profile and their body analysis, produce a personalised transformation plan
-that identifies their peak potential and the gaps they need to close.
-Respond ONLY with a valid JSON object — no explanation, no markdown, no preamble.
-Use exactly these keys:
-{
-  "peak_lean_mass_kg": <float, estimated natural peak lean mass>,
-  "target_bf_pct": <float, ideal target body fat %>,
-  "peak_ffmi": <float, projected peak FFMI>,
-  "muscle_gain_required_kg": <float>,
-  "fat_loss_required_pct": <float>,
-  "muscle_gaps": {
-    "chest": <float, kg to gain>,
-    "back": <float>,
-    "legs": <float>,
-    "arms": <float>,
-    "shoulders": <float>
-  },
-  "primary_strategy": <"bulk" | "cut" | "recomp">,
-  "agent_reasoning": <string, 2-3 sentence explanation>
-}
-"""
+from app.agents.gemini_client import call_gemini, parse_json
 
 
 def run_workout_agent(user: dict, body_analysis: dict) -> dict:
     """
-    user: dict of User model fields
-    body_analysis: dict of BodyAnalysis model fields
-    Returns dict ready to be saved as TransformationPlan.
+    Call Gemini to generate a personalized workout strategy.
     """
     prompt = f"""
-USER PROFILE:
-{json.dumps(user, indent=2)}
+You are an expert fitness coach and biomechanics AI.
+Analyze the user and their structural body data to provide a deterministic workout plan.
 
-BODY ANALYSIS:
-{json.dumps(body_analysis, indent=2)}
+User Data: {json.dumps(user)}
+Body Analysis: {json.dumps(body_analysis)}
 
-Estimate this user's peak natural physique potential and identify the transformation gaps.
-Consider their frame type, current FFMI, experience level, and primary goal.
+Return ONLY valid JSON with exactly the following keys and appropriate types:
+- peak_lean_mass_kg (float)
+- target_bf_pct (float)
+- peak_ffmi (float)
+- muscle_gain_required_kg (float)
+- fat_loss_required_pct (float)
+- muscle_gaps (dict with float values for: chest, back, legs, arms, shoulders)
+- primary_strategy (string: "bulk", "cut", or "recomp")
+- agent_reasoning (string describing your logic based on the user's data and consistency)
+
+Ensure peak physiological parameters stay within realistic human bounds based on the user's structural frame.
+Output ONLY JSON, no markdown formatting like ```json.
 """
-    return _call_gemini(WORKOUT_SYSTEM, prompt)
+    try:
+        text = call_gemini(prompt)
+        return parse_json(text)
+    except Exception as e:
+        print(f"Workout agent error: {e}")
+        return {
+            "peak_lean_mass_kg": body_analysis.get("peak_lean_mass_kg") or 72.5,
+            "target_bf_pct": 12.0,
+            "peak_ffmi": body_analysis.get("peak_ffmi") or 23.8,
+            "muscle_gain_required_kg": body_analysis.get("lean_mass_gap_kg") or 6.0,
+            "fat_loss_required_pct": 5.0,
+            "muscle_gaps": {"chest": 2.0, "back": 2.0, "legs": 2.5, "arms": 1.2, "shoulders": 1.5},
+            "primary_strategy": "recomp",
+            "agent_reasoning": f"Fallback plan due to API error: {e}",
+        }

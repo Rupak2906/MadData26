@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import apiClient from "../api/client";
 
 export default function Home() {
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
   const [showAuth, setShowAuth] = useState(false);
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({ name: "", email: "", password: "" });
@@ -15,8 +15,7 @@ export default function Home() {
     setLoading(true);
     const endpoint = isLogin ? "/auth/login" : "/auth/register";
     try {
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: "POST",
+      const res = await apiClient.post(endpoint, {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
@@ -65,7 +64,7 @@ export default function Home() {
       <div className="flex flex-col items-start justify-center flex-1 max-w-3xl mx-auto w-full px-8 py-20">
         <p className="text-emerald-500 text-xs uppercase tracking-widest font-medium mb-6">Anthropometric Analysis</p>
         <h1 className="text-5xl font-semibold text-zinc-100 leading-tight mb-4 tracking-tight">
-          My AI Fitness<br />Coach
+          Coachify <br />
         </h1>
         <p className="text-zinc-400 text-lg leading-relaxed mb-12 max-w-xl">
           Structural analysis and projected adaptation modeling based on anthropometric inputs, FFMI estimation, and Muscle Growth research data.

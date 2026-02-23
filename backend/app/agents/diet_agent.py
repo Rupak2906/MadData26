@@ -1,66 +1,55 @@
-import os
 import json
-import re
-import google.generativeai as genai
-from app.core.config import settings
-
-genai.configure(api_key=settings.GEMINI_API_KEY)
-MODEL = "gemini-2.0-flash"
-
-
-def _call_gemini(system: str, user: str) -> dict:
-    """Call Gemini and parse the JSON response. Raises ValueError on bad output."""
-    model = genai.GenerativeModel(
-        model_name=MODEL,
-        system_instruction=system,
-    )
-    response = model.generate_content(user)
-    raw = response.text.strip()
-    # Strip markdown code fences if present
-    raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Gemini returned invalid JSON: {e}\n\nRaw response:\n{raw}")
-
-
-DIET_SYSTEM = """
-You are an expert sports nutritionist and dietitian.
-Given a user profile and their body analysis, produce a personalised dietary plan.
-Respond ONLY with a valid JSON object — no explanation, no markdown, no preamble.
-Use exactly these keys:
-{
-  "tdee": <float, total daily energy expenditure in kcal>,
-  "daily_calories": <int, adjusted target calories>,
-  "caloric_strategy": <"bulk" | "cut" | "recomp">,
-  "caloric_adjustment": <int, e.g. 300 or -400>,
-  "protein_g": <int>,
-  "carbs_g": <int>,
-  "fats_g": <int>,
-  "meals_per_day": <int>,
-  "meal_complexity": <"simple" | "moderate" | "detailed">,
-  "water_intake_liters": <float>,
-  "cheat_meals_per_week": <int>,
-  "dietary_preference": <string or null>,
-  "foods_to_avoid": <string, comma-separated or null>,
-  "diet_reasoning": <string, 2-3 sentence explanation>
-}
-"""
+from app.agents.gemini_client import call_gemini, parse_json
 
 
 def run_diet_agent(user: dict, body_analysis: dict) -> dict:
     """
-    user: dict of User model fields
-    body_analysis: dict of BodyAnalysis model fields
-    Returns dict ready to be saved as DietaryPlan.
+    Call Gemini to generate a personalized diet plan.
     """
     prompt = f"""
-USER PROFILE:
-{json.dumps(user, indent=2)}
+You are an expert clinical nutritionist AI.
+Analyze the user and their structural body data to provide a deterministic nutrition plan.
 
-BODY ANALYSIS:
-{json.dumps(body_analysis, indent=2)}
+User Data: {json.dumps(user)}
+Body Analysis: {json.dumps(body_analysis)}
 
-Generate the optimal dietary plan for this user based on their goal, body composition, and lifestyle.
+Return ONLY valid JSON with exactly the following keys and appropriate types:
+- tdee (float)
+- daily_calories (int)
+- caloric_strategy (string: "bulk", "cut", or "recomp")
+- caloric_adjustment (int: added or subtracted calories from TDEE)
+- protein_g (int)
+- carbs_g (int)
+- fats_g (int)
+- meals_per_day (int)
+- meal_complexity (string: "simple", "moderate", "complex")
+- water_intake_liters (float)
+- cheat_meals_per_week (int)
+- dietary_preference (string based on user constraints)
+- foods_to_avoid (string based on user constraints)
+- diet_reasoning (string describing your logic based on the targets and user preferences)
+
+Ensure the macros make physiological sense for the caloric target.
+Output ONLY JSON, no markdown formatting like ```json.
 """
-    return _call_gemini(DIET_SYSTEM, prompt)
+    try:
+        text = call_gemini(prompt)
+        return parse_json(text)
+    except Exception as e:
+        print(f"Diet agent error: {e}")
+        return {
+            "tdee": 2500.0,
+            "daily_calories": 2450,
+            "caloric_strategy": "recomp",
+            "caloric_adjustment": -50,
+            "protein_g": 170,
+            "carbs_g": 280,
+            "fats_g": 75,
+            "meals_per_day": 4,
+            "meal_complexity": "simple",
+            "water_intake_liters": 3.2,
+            "cheat_meals_per_week": 1,
+            "dietary_preference": "high-protein balanced",
+            "foods_to_avoid": "sugary drinks, deep-fried foods",
+            "diet_reasoning": f"Fallback dietary targets due to API error: {e}",
+        }

@@ -5,7 +5,7 @@ POST /predict
   1. Decode + validate front & back images via CVService
   2. Build feature vector from CV output + user profile
   3. Run ML models (frame type, peak lean mass, timeline)
-  4. Run Claude agents (diet, workout, timeline narrative)
+  4. Build deterministic plan payloads (diet, workout, timeline)
   5. Save BodyAnalysis + all plans to DB
   6. Return full plan response
 
@@ -18,13 +18,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import numpy as np
 import cv2
+import traceback
 from io import BytesIO
 from typing import Any
 from PIL import Image, UnidentifiedImageError
 
 from app.core.database import get_db
 from app.core.security import verify_jwt_token, resolve_token
-from app.core.config import settings
 from app.models.user import User
 from app.services.cv_service import CVService, ValidationError, RawMeasurements
 from app.services.prediction_service import save_body_analysis, get_body_analysis
@@ -172,7 +172,11 @@ async def upload_and_predict(
     """
 
     # 1. Authenticate
-    user = get_current_user(token, authorization, db)
+    try:
+        user = get_current_user(token, authorization, db)
+    except Exception as e:
+        print("[DEBUG][AUTH]", traceback.format_exc())
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
 
     # 2. Decode images
     async def decode(upload: UploadFile) -> np.ndarray:
@@ -203,11 +207,16 @@ async def upload_and_predict(
             )
         return img
 
-    img_front = await decode(front_image)
-    img_back = await decode(back_image)
+    try:
+        img_front = await decode(front_image)
+        img_back = await decode(back_image)
+    except Exception as e:
+        print("[DEBUG][IMAGE DECODE]", traceback.format_exc())
+        raise HTTPException(status_code=400, detail=f"Image decode failed: {e}")
 
     # 3. Validate pose types
     if front_pose_type.lower() != "front" or back_pose_type.lower() != "back":
+        print(f"[DEBUG][POSE VALIDATION] front_pose_type={front_pose_type}, back_pose_type={back_pose_type}")
         raise HTTPException(
             status_code=400,
             detail="front_pose_type must be 'front' and back_pose_type must be 'back'"
@@ -219,13 +228,16 @@ async def upload_and_predict(
     try:
         cv.validate_features(img_front, pose_type="front")
     except ValidationError as e:
+        print("[DEBUG][CV FRONT VALIDATION]", traceback.format_exc())
         errors.append(f"front: {e.message}")
     try:
         cv.validate_features(img_back, pose_type="back")
     except ValidationError as e:
+        print("[DEBUG][CV BACK VALIDATION]", traceback.format_exc())
         errors.append(f"back: {e.message}")
 
     if errors:
+        print("[DEBUG][CV ERRORS]", errors)
         return JSONResponse(status_code=400, content={"status": "rejected", "details": errors})
 
     # 5. Extract measurements
@@ -233,67 +245,92 @@ async def upload_and_predict(
         raw_front = cv.process_image(img_front, "front")
         raw_back = cv.process_image(img_back, "back")
     except ValidationError as e:
+        print("[DEBUG][CV PROCESS]", traceback.format_exc())
         return JSONResponse(
             status_code=400,
             content={"status": e.status, "reason": e.reason, "message": e.message}
         )
+    except Exception as e:
+        print("[DEBUG][CV PROCESS UNEXPECTED]", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Unexpected error during CV processing: {e}"}
+        )
 
-    raw = merge_measurements(raw_front, raw_back)
-
-    # 6. ML prediction
-    ml = run_ml_models(raw, user)
+    try:
+        raw = merge_measurements(raw_front, raw_back)
+        ml = run_ml_models(raw, user)
+    except Exception as e:
+        print("[DEBUG][ML]", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"ML model error: {e}"}
+        )
 
     # 7. Save body analysis
-    body_analysis_data = {
-        "shoulder_width_cm": round(raw.shoulder_width_n * user.height_cm, 2),
-        "hip_width_cm": round(raw.hip_width_n * user.height_cm, 2),
-        "torso_length_cm": round(raw.torso_length_n * user.height_cm, 2),
-        "arm_length_cm": round(raw.arm_length_n * user.height_cm, 2),
-        "leg_length_cm": round(raw.leg_length_n * user.height_cm, 2),
-        "shoulder_hip_ratio": round(raw.shoulder_width_n / (raw.hip_width_n + 1e-6), 3),
-        "symmetry_score": round(raw.symmetry_score, 3),
-        "frame_type": ml["frame_type"],
-        "body_fat_pct": ml["predicted_body_fat_pct"],
-        "lean_mass_kg": ml["current_lean_mass_kg"],
-        "ffmi": ml["current_ffmi"],
-    }
-    body_analysis = save_body_analysis(db, user.id, body_analysis_data)
+    try:
+        body_analysis_data = {
+            "shoulder_width_cm": round(raw.shoulder_width_n * user.height_cm, 2),
+            "hip_width_cm": round(raw.hip_width_n * user.height_cm, 2),
+            "torso_length_cm": round(raw.torso_length_n * user.height_cm, 2),
+            "arm_length_cm": round(raw.arm_length_n * user.height_cm, 2),
+            "leg_length_cm": round(raw.leg_length_n * user.height_cm, 2),
+            "shoulder_hip_ratio": round(raw.shoulder_width_n / (raw.hip_width_n + 1e-6), 3),
+            "symmetry_score": round(raw.symmetry_score, 3),
+            "frame_type": ml["frame_type"],
+            "body_fat_pct": ml["predicted_body_fat_pct"],
+            "lean_mass_kg": ml["current_lean_mass_kg"],
+            "ffmi": ml["current_ffmi"],
+        }
+        body_analysis = save_body_analysis(db, user.id, body_analysis_data)
+    except Exception as e:
+        print("[DEBUG][BODY ANALYSIS SAVE]", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Body analysis save error: {e}"}
+        )
 
     # 8. Build agent context
-    user_dict = {
-        "user_id": user.id,
-        "name": user.name,
-        "age": user.age,
-        "biological_sex": user.biological_sex,
-        "height_cm": user.height_cm,
-        "weight_kg": user.weight_kg,
-        "experience_level": user.experience_level,
-        "days_available": user.days_available,
-        "skip_frequency": user.skip_frequency,
-        "diet_strictness": user.diet_strictness,
-        "dietary_preference": user.dietary_preference,
-        "foods_to_avoid": user.foods_to_avoid,
-        "meals_per_day": user.meals_per_day,
-        "primary_goal": user.primary_goal,
-        "sleep_hours": user.sleep_hours,
-        "stress_level": user.stress_level,
-        "job_activity": user.job_activity,
-        "diet_quality": user.diet_quality,
-        "consistency_score": user.consistency_score,
-        "uses_supplements": user.uses_supplements,
-        "session_duration": user.session_duration,
-        "follows_progressive_overload": user.follows_progressive_overload,
-    }
+    try:
+        user_dict = {
+            "user_id": user.id,
+            "name": user.name,
+            "age": user.age,
+            "biological_sex": user.biological_sex,
+            "height_cm": user.height_cm,
+            "weight_kg": user.weight_kg,
+            "experience_level": user.experience_level,
+            "days_available": user.days_available,
+            "skip_frequency": user.skip_frequency,
+            "diet_strictness": user.diet_strictness,
+            "dietary_preference": user.dietary_preference,
+            "foods_to_avoid": user.foods_to_avoid,
+            "meals_per_day": user.meals_per_day,
+            "primary_goal": user.primary_goal,
+            "sleep_hours": user.sleep_hours,
+            "stress_level": user.stress_level,
+            "job_activity": user.job_activity,
+            "diet_quality": user.diet_quality,
+            "consistency_score": user.consistency_score,
+            "uses_supplements": user.uses_supplements,
+            "session_duration": user.session_duration,
+            "follows_progressive_overload": user.follows_progressive_overload,
+        }
+        analysis_dict = {
+            **body_analysis_data,
+            "peak_lean_mass_kg": ml["peak_lean_mass_kg"],
+            "peak_ffmi": ml["peak_ffmi"],
+            "lean_mass_gap_kg": ml["lean_mass_gap_kg"],
+            "months_realistic": ml["months_realistic"],
+        }
+    except Exception as e:
+        print("[DEBUG][AGENT CONTEXT]", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Agent context error: {e}"}
+        )
 
-    analysis_dict = {
-        **body_analysis_data,
-        "peak_lean_mass_kg": ml["peak_lean_mass_kg"],
-        "peak_ffmi": ml["peak_ffmi"],
-        "lean_mass_gap_kg": ml["lean_mass_gap_kg"],
-        "months_realistic": ml["months_realistic"],
-    }
-
-    # 9. Run Claude agents
+    # 9. Build deterministic plan payloads
     _WORKOUT_KEYS = [
         "peak_lean_mass_kg", "target_bf_pct", "peak_ffmi",
         "muscle_gain_required_kg", "fat_loss_required_pct",
@@ -315,92 +352,33 @@ async def upload_and_predict(
         "milestone_3_month", "milestone_3_description",
     ]
 
-    gemini_key = (settings.GEMINI_API_KEY or "").strip()
-    use_agents = bool(gemini_key) and not gemini_key.lower().startswith("dummy")
+    try:
+        workout_data = run_workout_agent(user_dict, analysis_dict)
+        diet_data = run_diet_agent(user_dict, analysis_dict)
+        timeline_data = run_timeline_agent(user_dict, workout_data, diet_data)
+    except Exception as e:
+        print("[DEBUG][AGENT EXECUTION]", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Agent execution error: {e}"}
+        )
 
-    if use_agents:
-        try:
-            workout_data = run_workout_agent(user_dict, analysis_dict)
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=f"Workout agent error: {e}")
-
-        try:
-            diet_data = run_diet_agent(user_dict, analysis_dict)
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=f"Diet agent error: {e}")
-
-        try:
-            timeline_data = run_timeline_agent(user_dict, workout_data, diet_data)
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=f"Timeline agent error: {e}")
-    else:
-        # Keep endpoint functional for local/dev if LLM key is unavailable.
-        target_bf = 12.0 if user.primary_goal in {"build_muscle", "both"} else 14.0
-        gain_needed = max(0.0, round(float(ml["lean_mass_gap_kg"]), 2))
-        workout_data = {
-            "peak_lean_mass_kg": float(ml["peak_lean_mass_kg"]),
-            "target_bf_pct": target_bf,
-            "peak_ffmi": float(ml["peak_ffmi"]),
-            "muscle_gain_required_kg": gain_needed,
-            "fat_loss_required_pct": max(0.0, round(float(ml["predicted_body_fat_pct"]) - target_bf, 2)),
-            "muscle_gaps": {"chest": 2.2, "back": 2.0, "legs": 2.8, "arms": 1.4, "shoulders": 1.6},
-            "primary_strategy": "recomp" if user.primary_goal == "both" else ("bulk" if user.primary_goal == "build_muscle" else "cut"),
-            "agent_reasoning": "Fallback plan generated without LLM agent output.",
-        }
-        tdee = int(round(user.weight_kg * 33))
-        adjustment = 250 if workout_data["primary_strategy"] == "bulk" else (-350 if workout_data["primary_strategy"] == "cut" else 0)
-        daily = max(1400, tdee + adjustment)
-        protein = int(round(user.weight_kg * 2.2))
-        fats = int(round(user.weight_kg * 0.8))
-        carbs = max(80, int(round((daily - (protein * 4 + fats * 9)) / 4)))
-        diet_data = {
-            "tdee": float(tdee),
-            "daily_calories": int(daily),
-            "caloric_strategy": workout_data["primary_strategy"],
-            "caloric_adjustment": int(adjustment),
-            "protein_g": protein,
-            "carbs_g": carbs,
-            "fats_g": fats,
-            "meals_per_day": 3,
-            "meal_complexity": "simple",
-            "water_intake_liters": 3.0,
-            "cheat_meals_per_week": 1,
-            "dietary_preference": user.dietary_preference or "none",
-            "foods_to_avoid": user.foods_to_avoid or "",
-            "diet_reasoning": "Fallback nutrition targets generated from body weight and strategy.",
-        }
-        realistic = max(6, int(round(gain_needed / 0.5)) if gain_needed > 0 else 6)
-        timeline_data = {
-            "total_months_optimistic": max(4, int(round(realistic * 0.8))),
-            "total_months_realistic": realistic,
-            "total_months_conservative": int(round(realistic * 1.2)),
-            "confidence_level": "medium",
-            "consistency_score": user.consistency_score if user.consistency_score is not None else 0.65,
-            "consistency_impact": "Higher adherence can materially shorten the timeline.",
-            "phase_1_goal": "Foundation and adherence",
-            "phase_1_months": max(1, realistic // 3),
-            "phase_2_goal": "Primary transformation phase",
-            "phase_2_months": max(2, realistic // 2),
-            "phase_3_goal": "Refinement and maintenance",
-            "phase_3_months": max(1, realistic - (max(1, realistic // 3) + max(2, realistic // 2))),
-            "milestone_1_month": max(1, realistic // 4),
-            "milestone_1_description": "Noticeable body composition improvement",
-            "milestone_2_month": max(2, realistic // 2),
-            "milestone_2_description": "Clear visual and strength improvements",
-            "milestone_3_month": max(3, int(round(realistic * 0.85))),
-            "milestone_3_description": "Near-target physique with consistent habits",
-        }
-
-    # 10. Save plans
-    transformation_plan = save_transformation_plan(
-        db, user.id, {k: v for k, v in workout_data.items() if k in _WORKOUT_KEYS}
-    )
-    dietary_plan = save_dietary_plan(
-        db, user.id, {k: v for k, v in diet_data.items() if k in _DIET_KEYS}
-    )
-    timeline = save_timeline(
-        db, user.id, {k: v for k, v in timeline_data.items() if k in _TIMELINE_KEYS}
-    )
+    try:
+        transformation_plan = save_transformation_plan(
+            db, user.id, {k: v for k, v in workout_data.items() if k in _WORKOUT_KEYS}
+        )
+        dietary_plan = save_dietary_plan(
+            db, user.id, {k: v for k, v in diet_data.items() if k in _DIET_KEYS}
+        )
+        timeline = save_timeline(
+            db, user.id, {k: v for k, v in timeline_data.items() if k in _TIMELINE_KEYS}
+        )
+    except Exception as e:
+        print("[DEBUG][PLAN SAVE]", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Plan save error: {e}"}
+        )
 
     return {
         "user_id": user.id,
