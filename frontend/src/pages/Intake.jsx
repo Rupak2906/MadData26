@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import apiClient from "../api/client";
 
 const steps = ["Basic Info", "Body Metrics", "Training", "Lifestyle", "Goals", "Photos"];
 
 export default function Intake() {
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [photo, setPhoto] = useState(null);
@@ -38,11 +38,10 @@ export default function Intake() {
 
   const OptionButton = ({ field, value, label }) => (
     <button onClick={() => update(field, value)}
-      className={`px-4 py-2.5 rounded-lg border text-xs font-medium uppercase tracking-wide transition-all duration-150 ${
-        formData[field] === value
+      className={`px-4 py-2.5 rounded-lg border text-xs font-medium uppercase tracking-wide transition-all duration-150 ${formData[field] === value
           ? "bg-emerald-600 border-emerald-600 text-white"
           : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
-      }`}>
+        }`}>
       {label}
     </button>
   );
@@ -79,11 +78,9 @@ export default function Intake() {
         ideal_physique: formData.ideal_physique || undefined,
       };
 
-      const profileRes = await fetch(`${API_BASE_URL}/user/profile`, {
-        method: "PATCH",
+      const profileRes = await apiClient.patch("/user/profile", {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(profilePayload),
       });
@@ -105,11 +102,7 @@ export default function Intake() {
       fd.append("front_pose_type", "front");
       fd.append("back_pose_type", "back");
       fd.append("token", token);
-      const predictRes = await fetch(`${API_BASE_URL}/predict`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const predictRes = await apiClient.post("/predict", {
         body: fd,
       });
       if (predictRes.status === 401) {
@@ -133,12 +126,7 @@ export default function Intake() {
         const predictIsInternal = predictRes.status >= 500;
 
         // Fallback: still generate a profile-based plan if CV prediction fails.
-        const regenRes = await fetch(`${API_BASE_URL}/plan/regenerate`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const regenRes = await apiClient.post("/plan/regenerate");
         if (regenRes.ok) {
           if (!predictIsInternal) {
             alert(
@@ -229,7 +217,7 @@ export default function Intake() {
           <div>
             <label className="text-zinc-500 text-xs uppercase tracking-wider mb-3 block">Sessions Per Week</label>
             <div className="flex flex-wrap gap-2">
-              {[1,2,3,4,5,6].map(d => <OptionButton key={d} field="days_available" value={String(d)} label={`${d}`} />)}
+              {[1, 2, 3, 4, 5, 6].map(d => <OptionButton key={d} field="days_available" value={String(d)} label={`${d}`} />)}
             </div>
           </div>
           <div>

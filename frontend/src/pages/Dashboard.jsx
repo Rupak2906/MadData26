@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import apiClient from "../api/client";
 
 const workoutPlan = {
   Monday: ["Squats 4x8", "Romanian Deadlift 3x10", "Leg Press 3x12", "Calf Raises 4x15"],
@@ -25,7 +26,6 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Dashboard() {
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
   const [activeTab, setActiveTab] = useState("body");
   const [plan, setPlan] = useState(null);
   const navigate = useNavigate();
@@ -36,11 +36,7 @@ export default function Dashboard() {
       navigate("/");
       return;
     }
-    fetch(`${API_BASE_URL}/plan`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
+    apiClient.get("/plan")
       .then(async (r) => {
         if (r.status === 401) {
           localStorage.removeItem("token");
@@ -51,8 +47,8 @@ export default function Dashboard() {
         return r.json();
       })
       .then(data => setPlan(data))
-      .catch(() => {});
-  }, [API_BASE_URL, navigate]);
+      .catch(() => { });
+  }, [navigate]);
 
   // Pull real data from API or fall back to defaults
   const tp = plan?.transformation_plan;
@@ -66,12 +62,12 @@ export default function Dashboard() {
   const muscleGapData = tp?.muscle_gaps
     ? Object.entries(tp.muscle_gaps).map(([muscle, gap]) => ({ muscle, gap }))
     : [
-        { muscle: "Legs", gap: 4.5 },
-        { muscle: "Back", gap: 2.8 },
-        { muscle: "Chest", gap: 3.2 },
-        { muscle: "Shoulders", gap: 1.8 },
-        { muscle: "Arms", gap: 1.4 },
-      ];
+      { muscle: "Legs", gap: 4.5 },
+      { muscle: "Back", gap: 2.8 },
+      { muscle: "Chest", gap: 3.2 },
+      { muscle: "Shoulders", gap: 1.8 },
+      { muscle: "Arms", gap: 1.4 },
+    ];
 
   const tabs = [
     { id: "body", label: "Body Analysis" },
@@ -110,9 +106,8 @@ export default function Dashboard() {
         <div className="max-w-5xl mx-auto px-6 flex">
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`px-5 py-3.5 text-xs font-medium uppercase tracking-wider border-b-2 transition-all ${
-                activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-zinc-500 hover:text-zinc-300"
-              }`}>
+              className={`px-5 py-3.5 text-xs font-medium uppercase tracking-wider border-b-2 transition-all ${activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-zinc-500 hover:text-zinc-300"
+                }`}>
               {tab.label}
             </button>
           ))}
